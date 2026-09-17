@@ -34,7 +34,7 @@ st.markdown(
 st.markdown('<div class="notranslate">', unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 1. DATABASE PERMANEN & SESSION STATE (KUMULATIF)
+# 1. DATABASE PERMANEN & SESSION STATE
 # ---------------------------------------------------------
 MASTER_FILE = "database_master.xlsx"
 
@@ -54,8 +54,7 @@ def load_master_database():
         try:
             xls = pd.ExcelFile(MASTER_FILE)
             for sname in xls.sheet_names:
-                df_loaded = pd.read_excel(MASTER_FILE, sheet_name=sname)
-                sheets[sname] = df_loaded
+                sheets[sname] = pd.read_excel(MASTER_FILE, sheet_name=sname)
         except Exception:
             pass
     return sheets
@@ -138,7 +137,6 @@ def process_and_merge_files(uploaded_files):
             for sname in xls.sheet_names:
                 df_new = pd.read_excel(up_file, sheet_name=sname)
                 if sname in merged and not merged[sname].empty:
-                    # Gabungkan data baru di bawah data lama dan buang duplikasi persis
                     merged[sname] = pd.concat(
                         [merged[sname], df_new], ignore_index=True
                     ).drop_duplicates()
@@ -210,7 +208,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Ambil dataframe Work Order & Frekuensi Breakdown
 df_wo = pd.DataFrame()
 for key in st.session_state.data_sheets.keys():
     if "WORK ORDER" in key.upper() or "WO" in key.upper():
@@ -234,17 +231,42 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🤖 Asisten Analis AI",
 ])
 
+# FUNGSI PEMBERSIH UNTUK HEADER & SEL KOSONG
+def clean_excel_dataframe(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
+    # Buang baris dan kolom yang 100% kosong
+    df_clean = df.dropna(how="all").dropna(how="all", axis=1)
+    
+    # Cari baris yang kemungkinan header asli (berisi teks tidak kosong paling banyak)
+    valid_row_idx = None
+    for idx, row in df_clean.head(10).iterrows():
+        non_null_count = row.notnull().sum()
+        if non_null_count >= 3:
+            valid_row_idx = idx
+            break
+            
+    if valid_row_idx is not None and valid_row_idx > 0:
+        new_header = df_clean.loc[valid_row_idx].values
+        df_clean = df_clean.iloc[valid_row_idx + 1:].copy()
+        df_clean.columns = new_header
+        
+    df_clean = df_clean.fillna("")
+    # Buang kolom yang namanya kosong/Unnamed
+    df_clean = df_clean.loc[:, ~df_clean.columns.astype(str).str.startswith("Unnamed")]
+    return df_clean
+
 with tab1:
-    st.subheader("Matriks Kinerja Harian Crane (Kumulatif & Rapi)")
+    st.subheader("Matriks Kinerja Harian Crane (Bersih & Rapi)")
     sd_sheet = None
     for k in st.session_state.data_sheets.keys():
         if "SUMMARY" in k.upper() or "DAILY" in k.upper():
             sd_sheet = st.session_state.data_sheets[k]
             break
+            
     if sd_sheet is not None and not sd_sheet.empty:
-        # Bersihkan None, buang baris/kolom kosong agar tampil rapi
-        sd_sheet_clean = sd_sheet.dropna(how="all").dropna(how="all", axis=1)
-        sd_sheet_clean = sd_sheet_clean.fillna("")
+        sd_sheet_clean = clean_excel_dataframe(sd_sheet)
         st.dataframe(sd_sheet_clean, use_container_width=True)
     else:
         st.info("Unggah berkas Excel di sidebar untuk melihat data harian.")
@@ -252,8 +274,7 @@ with tab1:
 with tab2:
     st.subheader("🚨 Frekuensi Breakdown per Subsystem & Asset CC")
     if not df_bd_freq.empty:
-        df_freq_clean = df_bd_freq.dropna(how="all").dropna(how="all", axis=1)
-        df_freq_clean = df_freq_clean.fillna("")
+        df_freq_clean = clean_excel_dataframe(df_bd_freq)
         st.dataframe(df_freq_clean, use_container_width=True)
     else:
         st.info("Belum ada data frekuensi breakdown.")
@@ -318,7 +339,7 @@ with tab3:
 with tab4:
     st.subheader("Daftar Perintah Kerja (Work Orders)")
     if not df_wo.empty:
-        df_wo_clean = df_wo.dropna(how="all").fillna("")
+        df_wo_clean = clean_excel_dataframe(df_wo)
         st.dataframe(df_wo_clean, use_container_width=True)
     else:
         st.info("Data Work Order kosong.")
