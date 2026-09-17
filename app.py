@@ -5,26 +5,28 @@ import plotly.express as px
 import streamlit as st
 
 # =========================================================
-# 🔑 PASANG API KEY GEMINI LANGSUNG DI SINI
+# 🔑 KONFIGURASI HALAMAN & API KEY GEMINI
 # =========================================================
-GEMINI_API_KEY = "AQ.Ab8RN6LtWiaNYlkM3-SvlRNUiTBeIkGxXce6BLyJK8WyxW9jVA"  # Masukkan API Key kamu
-
-# ---------------------------------------------------------
-# 1. KONFIGURASI HALAMAN
-# ---------------------------------------------------------
 st.set_page_config(
     page_title="SIM-CC | Analytics & Maintenance System",
     page_icon="🏗️",
     layout="wide",
 )
 
+# 1. Ambil API Key dari Secrets Streamlit Cloud
+RAW_KEY = st.secrets.get("GEMINI_API_KEY", "")
+clean_api_key = str(RAW_KEY).strip().strip('"').strip("'")
+
+# 2. Paksa Environment Variable agar tidak memicu fallback OAuth
+if clean_api_key:
+    os.environ["GEMINI_API_KEY"] = clean_api_key
+    os.environ["GOOGLE_API_KEY"] = clean_api_key
+
 st.markdown(
     """
     <meta name="google" content="notranslate">
     <style>
-        html, body, [class*="css"] {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
+        html, body, [class*="css"] { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         .main-header {
             background: linear-gradient(90deg, #0F52BA 0%, #1E3C72 100%);
             padding: 20px;
@@ -41,7 +43,7 @@ st.markdown(
 st.markdown('<div class="notranslate">', unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 2. DATABASE PERMANEN & INISIALISASI SESSION STATE
+# 1. DATABASE PERMANEN & SESSION STATE
 # ---------------------------------------------------------
 MASTER_FILE = "database_master.xlsx"
 
@@ -76,13 +78,10 @@ def save_master_database(sheets_dict):
 if "data_sheets" not in st.session_state:
     st.session_state.data_sheets = load_master_database()
 
-# ---------------------------------------------------------
-# PERBAIKAN 1: Validasi API Key Fleksibel & Tepat
-# ---------------------------------------------------------
-clean_api_key = GEMINI_API_KEY.strip() if GEMINI_API_KEY else ""
+# Inisialisasi Gemini AI
 ai_is_active = False
 
-if clean_api_key and "MASUKKAN_API_KEY" not in clean_api_key and len(clean_api_key) > 5:
+if clean_api_key and len(clean_api_key) > 10:
     try:
         genai.configure(api_key=clean_api_key)
         ai_is_active = True
@@ -90,7 +89,7 @@ if clean_api_key and "MASUKKAN_API_KEY" not in clean_api_key and len(clean_api_k
         ai_is_active = False
 
 # ---------------------------------------------------------
-# 3. PORTAL LOGIN
+# 2. PORTAL LOGIN
 # ---------------------------------------------------------
 if not st.session_state.logged_in:
     st.markdown(
@@ -114,22 +113,20 @@ if not st.session_state.logged_in:
             btn_login = st.form_submit_button("Masuk Aplikasi")
 
             if btn_login:
-                if username == "admin" and password == "11111":
+                if username == "admin" and password == "admin123":
                     st.session_state.logged_in = True
                     st.success("Login berhasil!")
                     st.rerun()
                 else:
                     st.error("Username atau Password salah!")
-    st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
 
 # ---------------------------------------------------------
-# 4. PARSER & MULTI-FILE MERGE LOGIC
+# 3. MULTI-FILE MERGE LOGIC
 # ---------------------------------------------------------
 def process_and_merge_files(uploaded_files):
     merged = st.session_state.data_sheets.copy()
-
     for up_file in uploaded_files:
         try:
             xls = pd.ExcelFile(up_file)
@@ -143,12 +140,11 @@ def process_and_merge_files(uploaded_files):
                     merged[sname] = df_new
         except Exception as e:
             st.error(f"Eror membaca file {up_file.name}: {e}")
-
     return merged
 
 
 # ---------------------------------------------------------
-# 5. SIDEBAR (MULTI-FILE UPLOADER & RESET)
+# 4. SIDEBAR
 # ---------------------------------------------------------
 st.sidebar.markdown("### 👤 Informasi User")
 st.sidebar.info("Logged in as: **Administrator**")
@@ -168,7 +164,7 @@ if st.sidebar.button("🚪 Keluar"):
 st.sidebar.divider()
 st.sidebar.markdown("### 📁 Upload File Performance Excel")
 uploaded_files = st.sidebar.file_uploader(
-    "Unggah satu atau beberapa file Excel sekaligus:",
+    "Unggah file Excel (bisa lebih dari 1 file):",
     type=["xlsx", "xls"],
     accept_multiple_files=True,
 )
@@ -182,7 +178,7 @@ if uploaded_files:
         st.rerun()
 
 # ---------------------------------------------------------
-# 6. DASHBOARD UTAMA
+# 5. DASHBOARD UTAMA
 # ---------------------------------------------------------
 st.markdown(
     """
@@ -194,36 +190,71 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Ekstraksi Sheet dari Database Master
 df_wo = pd.DataFrame()
 for key in st.session_state.data_sheets.keys():
     if "WORK ORDER" in key.upper() or "WO" in key.upper():
         df_wo = st.session_state.data_sheets[key]
         break
 
-# Ekstraksi Breakdown Frequency Sheet
+pm_count = 0
+cm_count = 0
+total_wo_count = len(df_wo)
+
+if not df_wo.empty:
+    df_clean = df_wo.fillna("")
+    df_str = df_clean.apply(
+        lambda row: " ".join(
+            [str(val) for val in row if str(val).strip() != ""]
+        ),
+        axis=1,
+    )
+
+    cm_count = int(
+        df_str.str.contains(
+            r"Breakdown|CM|Corrective|Kerusakan|Repair|Trouble|Fault",
+            case=False,
+            regex=True,
+        ).sum()
+    )
+    pm_count = int(
+        df_str.str.contains(
+            r"PM|Preventive|Pencegahan|Rutin|Inspection|Check|Perawatan",
+            case=False,
+            regex=True,
+        ).sum()
+    )
+
+    if pm_count == 0 and cm_count == 0:
+        cm_count = total_wo_count
+
 df_bd_freq = pd.DataFrame()
 for key in st.session_state.data_sheets.keys():
     if "FREQ" in key.upper():
         df_bd_freq = st.session_state.data_sheets[key]
         break
 
+total_bd_freq = cm_count
+
+col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
+col_m1.metric("Total Pesanan Kerja", f"{total_wo_count} WO")
+col_m2.metric("🛠️ Jumlah PM", f"{pm_count} WO")
+col_m3.metric("🚨 Jumlah CM", f"{cm_count} WO")
+col_m4.metric("📊 Total BD Event", f"{total_bd_freq} Event")
+col_m5.metric("🤖 Status AI", "Aktif (Gemini)" if ai_is_active else "Mati")
+
 st.divider()
 
 # ---------------------------------------------------------
-# 7. TAB ANALISIS & DIAGRAM
+# 6. TAB APLIKASI
 # ---------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    [
-        "📊 Ringkasan Kinerja Harian",
-        "🚨 Rincian Berdasarkan Frekuensi",
-        "📈 Analisis Diagram",
-        "📋 Daftar Perintah Kerja (WO)",
-        "🤖 Asisten Analis AI",
-    ]
-)
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 Ringkasan Kinerja Harian",
+    "🚨 Rincian Berdasarkan Frekuensi",
+    "📈 Analisis Diagram",
+    "📋 Daftar Perintah Kerja (WO)",
+    "🤖 Asisten Analis AI",
+])
 
-# TAB 1: SUMMARY DAILY PERFORMANCE
 with tab1:
     st.subheader("Matriks Kinerja Harian Crane")
     sd_sheet = None
@@ -231,28 +262,30 @@ with tab1:
         if "SUMMARY" in k.upper() or "DAILY" in k.upper():
             sd_sheet = st.session_state.data_sheets[k]
             break
-
     if sd_sheet is not None and not sd_sheet.empty:
-        st.dataframe(sd_sheet, use_container_width=True)
+        # Bersihkan None pada tabel Ringkasan
+        sd_sheet_clean = sd_sheet.fillna("")
+        st.dataframe(sd_sheet_clean, use_container_width=True)
     else:
         st.info("Unggah berkas Excel di sidebar untuk melihat data.")
 
-# TAB 2: BREAKDOWN BY FREQUENCY
 with tab2:
-    st.subheader("Frekuensi Breakdown per Subsystem & Asset CC")
+    st.subheader("🚨 Frekuensi Breakdown per Subsystem & Asset CC")
     if not df_bd_freq.empty:
-        st.dataframe(df_bd_freq, use_container_width=True)
+        # Hapus baris dan kolom yang semuanya kosong, lalu ganti sisa None menjadi string kosong ""
+        df_freq_clean = df_bd_freq.dropna(how="all").dropna(how="all", axis=1)
+        df_freq_clean = df_freq_clean.fillna("")
+        st.dataframe(df_freq_clean, use_container_width=True)
     else:
         st.info("Belum ada data frekuensi breakdown.")
 
-# TAB 3: DIAGRAM ANALYTICS
 with tab3:
-    st.subheader("Visualisasi Diagram & Trend Kinerja")
+    st.subheader("📈 Visualisasi Diagram & Trend Kinerja")
     if not df_wo.empty:
         col_g1, col_g2 = st.columns(2)
 
         with col_g1:
-            st.markdown("##### **Distribusi Problem Code / Kerusakan**")
+            st.markdown("##### **Distribusi Problem Code (Bar Chart)**")
             prob_cols = [
                 c
                 for c in df_wo.columns
@@ -275,52 +308,50 @@ with tab3:
                     color_continuous_scale="Reds",
                 )
                 st.plotly_chart(fig_prob, use_container_width=True)
-            else:
-                st.write("Kolom Problem Code tidak ditemukan.")
 
         with col_g2:
-            st.markdown("##### **Jumlah Work Order per Unit Asset (CC)**")
+            st.markdown(
+                "##### **Proporsi Breakdown per Subsystem / Asset (Diagram Bulat)**"
+            )
             asset_cols = [
                 c for c in df_wo.columns if "ASSET" in str(c).upper()
             ]
             if asset_cols:
                 asset_counts = (
-                    df_wo[asset_cols[0]].value_counts().reset_index()
+                    df_wo[asset_cols[0]].value_counts().reset_index().head(6)
                 )
                 asset_counts.columns = ["Asset", "Total_WO"]
-                fig_asset = px.bar(
-                    asset_counts,
-                    x="Asset",
-                    y="Total_WO",
-                    text="Total_WO",
-                    color="Total_WO",
-                    color_continuous_scale="Blues",
-                )
-                st.plotly_chart(fig_asset, use_container_width=True)
-            else:
-                st.write("Kolom Asset tidak ditemukan.")
 
+                # Diagram Bulat (Donut Chart)
+                fig_pie = px.pie(
+                    asset_counts,
+                    names="Asset",
+                    values="Total_WO",
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.qualitative.Set1,
+                )
+                fig_pie.update_traces(
+                    textposition="inside", textinfo="percent+label"
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
     else:
         st.info("Diagram akan otomatis ditampilkan setelah file Excel dimuat.")
 
-# TAB 4: LIST OF WORK ORDERS
 with tab4:
     st.subheader("Daftar Perintah Kerja (Work Orders)")
     if not df_wo.empty:
-        st.dataframe(df_wo, use_container_width=True)
+        df_wo_clean = df_wo.fillna("")
+        st.dataframe(df_wo_clean, use_container_width=True)
     else:
         st.info("Data Work Order kosong.")
 
-# TAB 5: ASISTEN ANALIS AI SOLUTIF & PRESISI (PEMBACAAN UTUH PER-CC)
 with tab5:
     st.subheader("🤖 Asisten Analis AI Pemeliharaan Crane")
-
     if not ai_is_active:
         st.warning(
-            "⚠️ API Key belum terpasang dengan benar di dalam kode Python."
+            "⚠️ API Key Gemini belum terpasang di Secrets Streamlit Cloud (GEMINI_API_KEY)."
         )
 
-    # Tampilkan Riwayat Chat Interaktif
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
@@ -335,16 +366,14 @@ with tab5:
             st.write(user_query)
 
         if not ai_is_active:
-            err_msg = "AI belum aktif. Pastikan API Key Gemini di baris 11 sudah diisi dengan benar."
+            err_msg = "AI belum aktif. Sila pasang GEMINI_API_KEY di Secrets Streamlit Cloud."
             st.session_state.messages.append(
                 {"role": "assistant", "content": err_msg}
             )
             with st.chat_message("assistant"):
                 st.error(err_msg)
         else:
-            # Mengelompokkan Data Per-Asset/CC Agar Pembacaan AI Sangat Presisi
             grouped_context = "=== DATABASE KESELURUHAN TERKELOMPOK PER CONTAINER CRANE (CC/QC) ===\n\n"
-
             if not df_wo.empty:
                 asset_cols = [
                     c for c in df_wo.columns if "ASSET" in str(c).upper()
@@ -353,20 +382,21 @@ with tab5:
                     grouped_assets = df_wo.groupby(asset_cols[0])
                     for asset_name, group in grouped_assets:
                         grouped_context += f"--- UNIT CONTAINER CRANE: {asset_name} (Total: {len(group)} WO) ---\n"
-                        grouped_context += group.astype(str).to_csv(
+                        grouped_context += group.fillna("").astype(str).to_csv(
                             index=False
                         )
                         grouped_context += "\n"
                 else:
-                    grouped_context += df_wo.astype(str).to_csv(index=False)
-            else:
-                grouped_context += "Data Work Orders Kosong.\n"
+                    grouped_context += df_wo.fillna("").astype(str).to_csv(
+                        index=False
+                    )
 
-            # Memasukkan Sheet Pendukung Lainnya
             for sname, df_s in st.session_state.data_sheets.items():
                 if "WORK ORDER" not in sname.upper() and not df_s.empty:
                     grouped_context += f"\n=== SHEET STATISTIK: {sname} ===\n"
-                    grouped_context += df_s.astype(str).to_csv(index=False)
+                    grouped_context += df_s.fillna("").astype(str).to_csv(
+                        index=False
+                    )
 
             system_prompt = f"""
             Kamu adalah Asisten AI Pakar Pemeliharaan & Senior Engineer Container Crane (CC).
@@ -386,15 +416,16 @@ with tab5:
             full_prompt = f"{system_prompt}\n\nPertanyaan: {user_query}"
 
             with st.chat_message("assistant"):
-                with st.spinner("Menganalisis seluruh database & menyusun jawaban..."):
-                    # PERBAIKAN 2: Menggunakan Nama Model Standar yang Valid (gemini-1.5-flash / gemini-1.5-pro)
+                with st.spinner(
+                    "Menganalisis seluruh database & menyusun jawaban..."
+                ):
                     try:
-                        model = genai.GenerativeModel("gemini-3.6-flash")
+                        model = genai.GenerativeModel("gemini-2.5-flash")
                         response = model.generate_content(full_prompt)
                         ai_reply = response.text
                     except Exception:
                         try:
-                            model = genai.GenerativeModel("gemini-1.5-pro")
+                            model = genai.GenerativeModel("gemini-2.5-pro")
                             response = model.generate_content(full_prompt)
                             ai_reply = response.text
                         except Exception as ex:
