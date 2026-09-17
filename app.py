@@ -13,15 +13,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# 1. Ambil API Key dari Secrets Streamlit Cloud
-RAW_KEY = st.secrets.get("GEMINI_API_KEY", "")
-clean_api_key = str(RAW_KEY).strip().strip('"').strip("'")
-
-# 2. Paksa Environment Variable agar tidak memicu fallback OAuth
-if clean_api_key:
-    os.environ["GEMINI_API_KEY"] = clean_api_key
-    os.environ["GOOGLE_API_KEY"] = clean_api_key
-
 st.markdown(
     """
     <meta name="google" content="notranslate">
@@ -43,7 +34,7 @@ st.markdown(
 st.markdown('<div class="notranslate">', unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 1. DATABASE PERMANEN & SESSION STATE
+# 1. DATABASE PERMANEN & SESSION STATE (KUMULATIF)
 # ---------------------------------------------------------
 MASTER_FILE = "database_master.xlsx"
 
@@ -53,6 +44,9 @@ if "logged_in" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+if "user_api_key" not in st.session_state:
+    st.session_state.user_api_key = ""
+
 
 def load_master_database():
     sheets = {}
@@ -60,7 +54,8 @@ def load_master_database():
         try:
             xls = pd.ExcelFile(MASTER_FILE)
             for sname in xls.sheet_names:
-                sheets[sname] = pd.read_excel(MASTER_FILE, sheet_name=sname)
+                df_loaded = pd.read_excel(MASTER_FILE, sheet_name=sname)
+                sheets[sname] = df_loaded
         except Exception:
             pass
     return sheets
@@ -77,16 +72,6 @@ def save_master_database(sheets_dict):
 
 if "data_sheets" not in st.session_state:
     st.session_state.data_sheets = load_master_database()
-
-# Inisialisasi Gemini AI
-ai_is_active = False
-
-if clean_api_key and len(clean_api_key) > 10:
-    try:
-        genai.configure(api_key=clean_api_key)
-        ai_is_active = True
-    except Exception:
-        ai_is_active = False
 
 # ---------------------------------------------------------
 # 2. PORTAL LOGIN
@@ -121,9 +106,29 @@ if not st.session_state.logged_in:
                     st.error("Username atau Password salah!")
     st.stop()
 
+# ---------------------------------------------------------
+# 3. PENANGANAN API KEY (SECRETS + SIDEBAR)
+# ---------------------------------------------------------
+secret_key = st.secrets.get("GEMINI_API_KEY", "")
+final_api_key = (
+    st.session_state.user_api_key if st.session_state.user_api_key else secret_key
+)
+clean_api_key = str(final_api_key).strip().strip('"').strip("'")
+
+ai_is_active = False
+
+if clean_api_key and len(clean_api_key) > 10:
+    try:
+        os.environ["GEMINI_API_KEY"] = clean_api_key
+        os.environ["GOOGLE_API_KEY"] = clean_api_key
+        genai.configure(api_key=clean_api_key)
+        ai_is_active = True
+    except Exception:
+        ai_is_active = False
+
 
 # ---------------------------------------------------------
-# 3. MULTI-FILE MERGE LOGIC
+# 4. LOGIKA PENGGABUNGAN DATA (DATA LAMA TIDAK TERHAPUS)
 # ---------------------------------------------------------
 def process_and_merge_files(uploaded_files):
     merged = st.session_state.data_sheets.copy()
@@ -133,6 +138,7 @@ def process_and_merge_files(uploaded_files):
             for sname in xls.sheet_names:
                 df_new = pd.read_excel(up_file, sheet_name=sname)
                 if sname in merged and not merged[sname].empty:
+                    # Gabungkan data baru di bawah data lama dan buang duplikasi persis
                     merged[sname] = pd.concat(
                         [merged[sname], df_new], ignore_index=True
                     ).drop_duplicates()
@@ -144,10 +150,24 @@ def process_and_merge_files(uploaded_files):
 
 
 # ---------------------------------------------------------
-# 4. SIDEBAR
+# 5. SIDEBAR
 # ---------------------------------------------------------
 st.sidebar.markdown("### 👤 Informasi User")
 st.sidebar.info("Logged in as: **Administrator**")
+
+st.sidebar.divider()
+st.sidebar.markdown("### 🔑 Pengaturan API Key AI")
+input_key = st.sidebar.text_input(
+    "Masukkan API Key Gemini (Opsional):",
+    value=st.session_state.user_api_key,
+    type="password",
+    help="Tempel API Key asli kamu di sini jika di Secrets belum terpasang!",
+)
+if input_key != st.session_state.user_api_key:
+    st.session_state.user_api_key = input_key
+    st.rerun()
+
+st.sidebar.divider()
 
 if st.sidebar.button("🗑️ Reset Database Master"):
     if os.path.exists(MASTER_FILE):
@@ -174,11 +194,11 @@ if uploaded_files:
         merged_db = process_and_merge_files(uploaded_files)
         st.session_state.data_sheets = merged_db
         save_master_database(merged_db)
-        st.sidebar.success("✅ File berhasil digabungkan secara kumulatif!")
+        st.sidebar.success("✅ Data baru berhasil digabungkan tanpa menghapus data lama!")
         st.rerun()
 
 # ---------------------------------------------------------
-# 5. DASHBOARD UTAMA
+# 6. DASHBOARD UTAMA
 # ---------------------------------------------------------
 st.markdown(
     """
@@ -190,42 +210,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Ambil dataframe Work Order & Frekuensi Breakdown
 df_wo = pd.DataFrame()
 for key in st.session_state.data_sheets.keys():
     if "WORK ORDER" in key.upper() or "WO" in key.upper():
         df_wo = st.session_state.data_sheets[key]
         break
-
-pm_count = 0
-cm_count = 0
-total_wo_count = len(df_wo)
-
-if not df_wo.empty:
-    df_clean = df_wo.fillna("")
-    df_str = df_clean.apply(
-        lambda row: " ".join(
-            [str(val) for val in row if str(val).strip() != ""]
-        ),
-        axis=1,
-    )
-
-    cm_count = int(
-        df_str.str.contains(
-            r"Breakdown|CM|Corrective|Kerusakan|Repair|Trouble|Fault",
-            case=False,
-            regex=True,
-        ).sum()
-    )
-    pm_count = int(
-        df_str.str.contains(
-            r"PM|Preventive|Pencegahan|Rutin|Inspection|Check|Perawatan",
-            case=False,
-            regex=True,
-        ).sum()
-    )
-
-    if pm_count == 0 and cm_count == 0:
-        cm_count = total_wo_count
 
 df_bd_freq = pd.DataFrame()
 for key in st.session_state.data_sheets.keys():
@@ -233,19 +223,8 @@ for key in st.session_state.data_sheets.keys():
         df_bd_freq = st.session_state.data_sheets[key]
         break
 
-total_bd_freq = cm_count
-
-col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
-col_m1.metric("Total Pesanan Kerja", f"{total_wo_count} WO")
-col_m2.metric("🛠️ Jumlah PM", f"{pm_count} WO")
-col_m3.metric("🚨 Jumlah CM", f"{cm_count} WO")
-col_m4.metric("📊 Total BD Event", f"{total_bd_freq} Event")
-col_m5.metric("🤖 Status AI", "Aktif (Gemini)" if ai_is_active else "Mati")
-
-st.divider()
-
 # ---------------------------------------------------------
-# 6. TAB APLIKASI
+# 7. TAB APLIKASI
 # ---------------------------------------------------------
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Ringkasan Kinerja Harian",
@@ -256,23 +235,23 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 with tab1:
-    st.subheader("Matriks Kinerja Harian Crane")
+    st.subheader("Matriks Kinerja Harian Crane (Kumulatif & Rapi)")
     sd_sheet = None
     for k in st.session_state.data_sheets.keys():
         if "SUMMARY" in k.upper() or "DAILY" in k.upper():
             sd_sheet = st.session_state.data_sheets[k]
             break
     if sd_sheet is not None and not sd_sheet.empty:
-        # Bersihkan None pada tabel Ringkasan
-        sd_sheet_clean = sd_sheet.fillna("")
+        # Bersihkan None, buang baris/kolom kosong agar tampil rapi
+        sd_sheet_clean = sd_sheet.dropna(how="all").dropna(how="all", axis=1)
+        sd_sheet_clean = sd_sheet_clean.fillna("")
         st.dataframe(sd_sheet_clean, use_container_width=True)
     else:
-        st.info("Unggah berkas Excel di sidebar untuk melihat data.")
+        st.info("Unggah berkas Excel di sidebar untuk melihat data harian.")
 
 with tab2:
     st.subheader("🚨 Frekuensi Breakdown per Subsystem & Asset CC")
     if not df_bd_freq.empty:
-        # Hapus baris dan kolom yang semuanya kosong, lalu ganti sisa None menjadi string kosong ""
         df_freq_clean = df_bd_freq.dropna(how="all").dropna(how="all", axis=1)
         df_freq_clean = df_freq_clean.fillna("")
         st.dataframe(df_freq_clean, use_container_width=True)
@@ -311,7 +290,7 @@ with tab3:
 
         with col_g2:
             st.markdown(
-                "##### **Proporsi Breakdown per Subsystem / Asset (Diagram Bulat)**"
+                "##### **Proporsi Breakdown per Subsystem / Asset (Diagram Lingkaran)**"
             )
             asset_cols = [
                 c for c in df_wo.columns if "ASSET" in str(c).upper()
@@ -322,7 +301,6 @@ with tab3:
                 )
                 asset_counts.columns = ["Asset", "Total_WO"]
 
-                # Diagram Bulat (Donut Chart)
                 fig_pie = px.pie(
                     asset_counts,
                     names="Asset",
@@ -340,7 +318,7 @@ with tab3:
 with tab4:
     st.subheader("Daftar Perintah Kerja (Work Orders)")
     if not df_wo.empty:
-        df_wo_clean = df_wo.fillna("")
+        df_wo_clean = df_wo.dropna(how="all").fillna("")
         st.dataframe(df_wo_clean, use_container_width=True)
     else:
         st.info("Data Work Order kosong.")
@@ -349,7 +327,7 @@ with tab5:
     st.subheader("🤖 Asisten Analis AI Pemeliharaan Crane")
     if not ai_is_active:
         st.warning(
-            "⚠️ API Key Gemini belum terpasang di Secrets Streamlit Cloud (GEMINI_API_KEY)."
+            "⚠️ API Key belum terpasang atau tidak valid. Silakan masukkan API Key Gemini kamu di menu Sidebar sebelah kiri!"
         )
 
     for msg in st.session_state.messages:
@@ -366,7 +344,7 @@ with tab5:
             st.write(user_query)
 
         if not ai_is_active:
-            err_msg = "AI belum aktif. Sila pasang GEMINI_API_KEY di Secrets Streamlit Cloud."
+            err_msg = "AI belum aktif. Silakan masukkan API Key di menu Sidebar kiri terlebih dahulu."
             st.session_state.messages.append(
                 {"role": "assistant", "content": err_msg}
             )
