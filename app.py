@@ -7,7 +7,7 @@ import streamlit as st
 # =========================================================
 # 🔑 PASANG API KEY GEMINI LANGSUNG DI SINI
 # =========================================================
-GEMINI_API_KEY = "AQ.Ab8RN6KAx02YD9THgSin9eLiw_ibO6147ZvYDbx_MUDxg-Czwg"  # Masukkan API Key kamu
+GEMINI_API_KEY = "AQ.Ab8RN6LtWiaNYlkM3-SvlRNUiTBeIkGxXce6BLyJK8WyxW9jVA"  # Masukkan API Key kamu
 
 # ---------------------------------------------------------
 # 1. KONFIGURASI HALAMAN
