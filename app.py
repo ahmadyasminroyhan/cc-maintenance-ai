@@ -1,203 +1,860 @@
+import base64
+import gc
 import os
+import re
 import google.generativeai as genai
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 # =========================================================
-# 🔑 KONFIGURASI HALAMAN & API KEY GEMINI
+# 🔑 KONFIGURASI API KEY GEMINI
 # =========================================================
-st.set_page_config(
-    page_title="SIM-CC | Analytics & Maintenance System",
-    page_icon="🏗️",
-    layout="wide",
+API_KEY_KAMU = "AQ.Ab8RN6I6EaoRZzCRPCab7Q-BGUeAA3_iVAzra4c11MhNhepG3A"
+clean_api_key = str(API_KEY_KAMU).strip().strip('"').strip("'")
+
+if (
+    not clean_api_key or clean_api_key == "AIzaSy..."
+) and "GEMINI_API_KEY" in st.secrets:
+  clean_api_key = (
+      str(st.secrets["GEMINI_API_KEY"]).strip().strip('"').strip("'")
+  )
+
+ai_is_active = False
+if clean_api_key and len(clean_api_key) > 10:
+  try:
+    for k in ["GEMINI_API_KEY", "GOOGLE_API_KEY"]:
+      if k in os.environ:
+        del os.environ[k]
+    genai.configure(api_key=clean_api_key)
+    ai_is_active = True
+  except Exception:
+    ai_is_active = False
+
+
+# =========================================================
+# 🖼️ FUNGSI UNTUK KONVERSI GAMBAR KE BASE64
+# =========================================================
+def get_base64_of_bin_file(bin_file):
+  try:
+    with open(bin_file, "rb") as f:
+      data = f.read()
+    return base64.b64encode(data).decode()
+  except Exception:
+    return ""
+
+
+# Load gambar lokal
+bg_login_b64 = get_base64_of_bin_file("bg_login.jpg")
+bg_header_b64 = get_base64_of_bin_file("bg_dashboard.jpg")
+if not bg_header_b64:
+  bg_header_b64 = get_base64_of_bin_file("background.jpg")
+
+# CSS Header Dashboard Dalam (Ada Gambar Samar)
+header_inside_style = (
+    f"""background: linear-gradient(135deg, rgba(0, 45, 98, 0.85) 0%, rgba(0, 56, 116, 0.80) 50%, rgba(0, 145, 210, 0.85) 100%), url("data:image/jpg;base64,{bg_header_b64}"); background-size: cover; background-position: center;"""
+    if bg_header_b64
+    else """background: linear-gradient(90deg, #002D62 0%, #003874 50%, #0091D2 100%);"""
 )
 
+# CSS Header Portal Login Luar (Biru Tua Polos Kosongan Tanpa Gambar)
+header_login_style = """background: linear-gradient(90deg, #001F42 0%, #002D62 50%, #003874 100%);"""
+
+# CSS Background Halaman Login (Gambar Pelabuhan Utuh & Tajam)
+login_bg_style = (
+    f"""[data-testid="stAppViewContainer"] {{ background-image: url("data:image/jpg;base64,{bg_login_b64}"); background-size: cover; background-position: center; background-repeat: no-repeat; background-attachment: fixed; }}"""
+    if bg_login_b64
+    else """[data-testid="stAppViewContainer"] {{ background-color: #002D62; }}"""
+)
+
+# Config Awal Streamlit
+st.set_page_config(
+    page_title="SIM-CC | Analytics System", page_icon="🏗️", layout="wide"
+)
+
+# Base CSS Styling
 st.markdown(
     """
-    <meta name="google" content="notranslate">
     <style>
         html, body, [class*="css"] { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .main-header {
-            background: linear-gradient(90deg, #0F52BA 0%, #1E3C72 100%);
-            padding: 20px;
-            border-radius: 10px;
+        
+        /* HEADER PORTAL LOGIN (BIRU TUA POLOS) */
+        .login-header {
+            background: linear-gradient(90deg, #001F42 0%, #002D62 50%, #003874 100%);
+            padding: 28px 20px;
+            border-radius: 14px;
             color: white;
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 25px;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.15);
         }
+        .login-header h1 {
+            margin: 0;
+            font-size: 30px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .login-header p {
+            margin-top: 8px;
+            margin-bottom: 0;
+            font-size: 15px;
+            opacity: 0.95;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        }
+
+        /* HEADER DASHBOARD DALAM (GAMBAR SAMAR) */
+        .main-header {
+            """
+    + header_inside_style
+    + """
+            padding: 28px 20px;
+            border-radius: 14px;
+            color: white;
+            text-align: center;
+            margin-bottom: 25px;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .main-header h1 {
+            margin: 0;
+            font-size: 30px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .main-header p {
+            margin-top: 8px;
+            margin-bottom: 0;
+            font-size: 15px;
+            opacity: 0.95;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        }
+        
+        /* FORM LOGIN KOTAK PUTIH SOLID */
+        [data-testid="stForm"] {
+            background-color: #ffffff !important;
+            padding: 35px 28px !important;
+            border-radius: 16px !important;
+            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.45) !important;
+            border-top: 6px solid #0091D2 !important;
+            border-left: none !important;
+            border-right: none !important;
+            border-bottom: none !important;
+        }
+        
+        /* KARTU METRIK PELINDO */
+        .metric-card {
+            background-color: #ffffff;
+            border-left: 5px solid #003874;
+            padding: 16px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            margin-bottom: 15px;
+        }
+        .metric-value { font-size: 24px; font-weight: bold; color: #002D62; }
+        .metric-label { font-size: 13px; color: #666666; text-transform: uppercase; letter-spacing: 0.5px; }
+        
+        /* HEADER SUB-BULAN TEMA PELINDO */
+        .month-header {
+            background: linear-gradient(90deg, #002D62 0%, #0091D2 100%);
+            color: white;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-size: 17px;
+            font-weight: bold;
+            margin-top: 25px;
+            margin-bottom: 15px;
+        }
+        
+        /* KOTAK STATISTIK UNIT PELINDO */
+        .stat-box {
+            background: linear-gradient(135deg, #003874 0%, #00A3E0 100%);
+            color: white;
+            padding: 16px;
+            border-radius: 10px;
+            text-align: center;
+            margin-bottom: 12px;
+            box-shadow: 0 4px 10px rgba(0,56,116,0.2);
+        }
+        .stat-title { font-size: 12px; opacity: 0.9; text-transform: uppercase; letter-spacing: 1px; }
+        .stat-num { font-size: 22px; font-weight: bold; margin-top: 4px; }
     </style>
 """,
     unsafe_allow_html=True,
 )
 
-st.markdown('<div class="notranslate">', unsafe_allow_html=True)
+# PALETTE BIRU PELINDO UNTUK CHART & GRAFIK
+PELINDO_GRADIENT = [
+    "#001F42",
+    "#002D62",
+    "#003874",
+    "#004B93",
+    "#0062B1",
+    "#007ACC",
+    "#0091D2",
+    "#00A3E0",
+    "#33B5E5",
+]
 
-# ---------------------------------------------------------
-# 1. DATABASE PERMANEN & SESSION STATE
-# ---------------------------------------------------------
+MONTH_LIST = [
+    "Januari",
+    "Februari",
+    "Maret",
+    "April",
+    "Mei",
+    "Juni",
+    "Juli",
+    "Agustus",
+    "September",
+    "Oktober",
+    "November",
+    "Desember",
+]
+
+# =========================================================
+# 💾 DATABASE MANAGEMENT
+# =========================================================
 MASTER_FILE = "database_master.xlsx"
-
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "user_api_key" not in st.session_state:
-    st.session_state.user_api_key = ""
 
 
 def load_master_database():
-    sheets = {}
-    if os.path.exists(MASTER_FILE):
-        try:
-            xls = pd.ExcelFile(MASTER_FILE)
-            for sname in xls.sheet_names:
-                sheets[sname] = pd.read_excel(MASTER_FILE, sheet_name=sname)
-        except Exception:
-            pass
-    return sheets
+  sheets = {}
+  if os.path.exists(MASTER_FILE):
+    try:
+      with pd.ExcelFile(MASTER_FILE) as xls:
+        for sname in xls.sheet_names:
+          sheets[sname] = pd.read_excel(xls, sheet_name=sname)
+    except Exception:
+      pass
+  return sheets
 
 
 def save_master_database(sheets_dict):
+  try:
+    with pd.ExcelWriter(MASTER_FILE, engine="openpyxl") as writer:
+      for sname, df in sheets_dict.items():
+        if not df.empty:
+          df.to_excel(writer, sheet_name=sname[:31], index=False)
+  except Exception as e:
+    st.error(f"Gagal menyimpan database master: {e}")
+
+
+def safe_reset_database():
+  st.session_state.data_sheets = {}
+  gc.collect()
+  if os.path.exists(MASTER_FILE):
     try:
-        with pd.ExcelWriter(MASTER_FILE, engine="openpyxl") as writer:
-            for sname, df in sheets_dict.items():
-                df.to_excel(writer, sheet_name=sname, index=False)
-    except Exception as e:
-        st.error(f"Gagal menyimpan database master: {e}")
+      os.remove(MASTER_FILE)
+    except PermissionError:
+      with pd.ExcelWriter(MASTER_FILE, engine="openpyxl") as writer:
+        pd.DataFrame().to_excel(writer, sheet_name="EMPTY", index=False)
 
 
-if "data_sheets" not in st.session_state:
-    st.session_state.data_sheets = load_master_database()
+if "logged_in" not in st.session_state:
+  st.session_state.logged_in = False
 
-# ---------------------------------------------------------
-# 2. PORTAL LOGIN
-# ---------------------------------------------------------
+if "uploader_key" not in st.session_state:
+  st.session_state.uploader_key = 0
+
+if "messages" not in st.session_state:
+  st.session_state.messages = []
+
+# =========================================================
+# 🔒 PORTAL LOGIN (Luar)
+# =========================================================
 if not st.session_state.logged_in:
-    st.markdown(
-        """
-        <div class="main-header">
+  # Background gambar tajam untuk halaman login
+  st.markdown(f"<style>{login_bg_style}</style>", unsafe_allow_html=True)
+
+  # Header Login Biru Polos Kosongan
+  st.markdown(
+      """
+        <div class="login-header">
             <h1>🔒 Portal Login SIM-CC</h1>
             <p>Sistem Pemantauan Kinerja Operasional & Breakdown Crane Harian</p>
         </div>
         """,
-        unsafe_allow_html=True,
+      unsafe_allow_html=True,
+  )
+
+  _, col2, _ = st.columns([1, 2, 1])
+  with col2:
+    with st.form("login_form"):
+      st.markdown(
+          "<h3 style='text-align: center; color: #002D62; margin-top: 0px; margin-bottom: 20px;'>Masuk Akun Administrator</h3>",
+          unsafe_allow_html=True,
+      )
+      u = st.text_input("Username", value="admin")
+      p = st.text_input("Password", type="password", value="admin123")
+      submitted = st.form_submit_button(
+          "Masuk Aplikasi", use_container_width=True
+      )
+      if submitted:
+        if u == "admin" and p == "admin123":
+          st.session_state.logged_in = True
+          st.rerun()
+        else:
+          st.error("Kredensial salah!")
+  st.stop()
+
+# Set background bersih terang khusus area Dashboard Dalam
+st.markdown(
+    """
+    <style>
+        [data-testid="stAppViewContainer"] {
+            background-color: #f7f9fc !important;
+            background-image: none !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# =========================================================
+# ⚙️ LOGIKA PARSING DATA
+# =========================================================
+def process_and_merge_files(uploaded_files, manual_month):
+  merged = load_master_database()
+
+  for up_file in uploaded_files:
+    file_month = (
+        manual_month if (manual_month and manual_month != "Otomatis") else "Agustus"
     )
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        with st.form(key="login_form"):
-            st.subheader("🔑 Kredensial Masuk")
-            username = st.text_input("Username", placeholder="admin")
-            password = st.text_input(
-                "Password", type="password", placeholder="••••••••"
-            )
-            btn_login = st.form_submit_button("Masuk Aplikasi")
-
-            if btn_login:
-                if username == "admin" and password == "admin123":
-                    st.session_state.logged_in = True
-                    st.success("Login berhasil!")
-                    st.rerun()
-                else:
-                    st.error("Username atau Password salah!")
-    st.stop()
-
-# ---------------------------------------------------------
-# 3. PENANGANAN API KEY (SECRETS + SIDEBAR)
-# ---------------------------------------------------------
-secret_key = st.secrets.get("GEMINI_API_KEY", "")
-final_api_key = (
-    st.session_state.user_api_key if st.session_state.user_api_key else secret_key
-)
-clean_api_key = str(final_api_key).strip().strip('"').strip("'")
-
-ai_is_active = False
-
-if clean_api_key and len(clean_api_key) > 10:
     try:
-        os.environ["GEMINI_API_KEY"] = clean_api_key
-        os.environ["GOOGLE_API_KEY"] = clean_api_key
-        genai.configure(api_key=clean_api_key)
-        ai_is_active = True
+      with pd.ExcelFile(up_file) as xls:
+        for sname in xls.sheet_names:
+          df_new = pd.read_excel(xls, sheet_name=sname)
+          if df_new.empty:
+            continue
+
+          df_new["BULAN_TAG"] = str(file_month)
+          sheet_key = f"{sname}_{file_month}"[:31]
+
+          if sheet_key in merged and not merged[sheet_key].empty:
+            merged[sheet_key] = pd.concat(
+                [merged[sheet_key], df_new], ignore_index=True
+            )
+          else:
+            merged[sheet_key] = df_new
+    except Exception as e:
+      st.error(f"Error membaca file {up_file.name}: {e}")
+
+  save_master_database(merged)
+  return merged
+
+
+def parse_daily_boxes(data_sheets):
+  records = []
+
+  for sheet_name, df in data_sheets.items():
+    if df.empty or sheet_name == "EMPTY":
+      continue
+
+    try:
+      header_idx = None
+      for idx in range(min(12, len(df))):
+        row_vals = " ".join(df.iloc[idx].dropna().astype(str)).upper()
+        if "UNIT / TANGGAL" in row_vals or "UNIT" in row_vals:
+          header_idx = idx
+          break
+
+      if header_idx is None:
+        continue
+
+      header_row = df.iloc[header_idx]
+
+      for r_idx in range(header_idx + 1, header_idx + 15):
+        if r_idx >= len(df):
+          break
+
+        row = df.iloc[r_idx]
+        unit_name = str(row.iloc[0]).strip().upper()
+
+        if not re.match(r"^CC\d+", unit_name):
+          continue
+
+        b_tag = (
+            row["BULAN_TAG"]
+            if "BULAN_TAG" in row and pd.notna(row["BULAN_TAG"])
+            else "Agustus"
+        )
+
+        for c_idx in range(1, len(row)):
+          col_raw = header_row.iloc[c_idx]
+          col_str = str(col_raw).strip().upper()
+
+          if (
+              "TOTAL" in col_str
+              or "BULAN_TAG" in col_str
+              or col_str == "NAN"
+              or col_str in [m.upper() for m in MONTH_LIST]
+          ):
+            continue
+
+          val = pd.to_numeric(row.iloc[c_idx], errors="coerce")
+          val_num = int(val) if (pd.notna(val) and val >= 0) else 0
+
+          dt_obj = pd.to_datetime(col_raw, errors="coerce")
+          if not pd.isna(dt_obj):
+            day_num = dt_obj.day
+            tgl_name = f"Tgl {day_num:02d}"
+          else:
+            clean_digit = re.sub(r"\D", "", col_str)
+            if clean_digit:
+              day_num = int(clean_digit)
+              tgl_name = f"Tgl {day_num:02d}"
+            else:
+              continue
+
+          records.append({
+              "Bulan": str(b_tag),
+              "DayNum": day_num,
+              "Tanggal": tgl_name,
+              "Asset": unit_name,
+              "Boxes": val_num,
+          })
     except Exception:
-        ai_is_active = False
+      continue
+
+  if records:
+    df_rec = pd.DataFrame(records)
+    df_rec = df_rec[df_rec["Bulan"].str.lower() != "nan"]
+    return df_rec.groupby(
+        ["Bulan", "DayNum", "Tanggal", "Asset"], as_index=False
+    )["Boxes"].sum()
+
+  return pd.DataFrame()
 
 
-# ---------------------------------------------------------
-# 4. LOGIKA PENGGABUNGAN DATA (DATA LAMA TIDAK TERHAPUS)
-# ---------------------------------------------------------
-def process_and_merge_files(uploaded_files):
-    merged = st.session_state.data_sheets.copy()
-    for up_file in uploaded_files:
-        try:
-            xls = pd.ExcelFile(up_file)
-            for sname in xls.sheet_names:
-                df_new = pd.read_excel(up_file, sheet_name=sname)
-                if sname in merged and not merged[sname].empty:
-                    merged[sname] = pd.concat(
-                        [merged[sname], df_new], ignore_index=True
-                    ).drop_duplicates()
-                else:
-                    merged[sname] = df_new
-        except Exception as e:
-            st.error(f"Eror membaca file {up_file.name}: {e}")
+def parse_clean_breakdown(data_sheets):
+  bd_frames = []
+  MONTH_LIST_UPPER = [m.upper() for m in MONTH_LIST]
+  all_standard_qcs = [f"QC{i:02d}" for i in range(1, 26)]
+
+  for sname, df in data_sheets.items():
+    if df.empty or sname == "EMPTY":
+      continue
+
+    upper_sname = str(sname).upper()
+    if "FREQ" in upper_sname or "BREAKDOWN BY FREQ" in upper_sname:
+      df_c = df.copy()
+
+      unit_header_idx = None
+      for i in range(min(15, len(df_c))):
+        row_items = [
+            str(x).strip().upper() for x in df_c.iloc[i].dropna() if pd.notna(x)
+        ]
+        if any(re.search(r"(QC|CC)\s*\d+", item) for item in row_items):
+          unit_header_idx = i
+          break
+
+      if unit_header_idx is not None:
+        headers = df_c.iloc[unit_header_idx].astype(str).str.strip()
+        new_cols = []
+        seen_cols = {}
+        for idx_c, val in enumerate(headers):
+          v_upper = str(val).upper() if pd.notna(val) else ""
+          if idx_c == 0:
+            c_name = "Description"
+          elif idx_c == 1:
+            c_name = "Nama Subsystem"
+          elif v_upper in [
+              "NAN",
+              "NONE",
+              "0",
+              "0.0",
+              "UNNAMED",
+              "ASSET CC",
+              "BREAKDOWN BY FREQUENCY",
+          ]:
+            c_name = f"Kolom_{idx_c}"
+          else:
+            c_name = str(val).strip()
+
+          qc_match = re.search(r"(QC|CC)\s*(\d+)", c_name.upper())
+          if qc_match:
+            c_num = int(qc_match.group(2))
+            c_name = f"QC{c_num:02d}"
+
+          if c_name in seen_cols:
+            seen_cols[c_name] += 1
+            c_name = f"{c_name}_{seen_cols[c_name]}"
+          else:
+            seen_cols[c_name] = 0
+
+          new_cols.append(c_name)
+
+        df_c = df_c.iloc[unit_header_idx + 1 :].copy()
+        df_c.columns = new_cols
+      else:
+        df_c.columns = [str(c).strip() for c in df_c.columns]
+
+      b_tag = "Agustus"
+      if "BULAN_TAG" in df.columns:
+        val_tag = str(df["BULAN_TAG"].iloc[0]).strip()
+        if val_tag != "" and val_tag.lower() != "nan":
+          b_tag = val_tag
+
+      cols_to_keep = []
+      for col in df_c.columns:
+        col_upper = str(col).strip().upper()
+        if col_upper in MONTH_LIST_UPPER or col_upper == "BULAN_TAG":
+          continue
+        cols_to_keep.append(col)
+
+      df_c = df_c[cols_to_keep]
+      df_c = df_c.dropna(how="all")
+
+      def is_valid_bd_row(row):
+        desc = str(row.iloc[0]).strip().upper() if len(row) > 0 else ""
+        subsys = str(row.iloc[1]).strip().upper() if len(row) > 1 else ""
+
+        invalid_keywords = [
+            "TOTAL",
+            "CANCEL",
+            "TGL",
+            "SYSTEM",
+            "SPREADER SYST",
+            "GANTRY SYSTEM",
+            "TRIM LIST",
+            "BOOM SYSTEM",
+            "TROLLEY SYST",
+            "HOIST SYSTEM",
+            "ELECTRIC CONT",
+            "NB",
+        ]
+
+        if any(
+            kw in desc for kw in ["TOTAL BD", "CANCEL", "( TGL", "SYSTEM"]
+        ) and subsys in ["NB", "-", ""]:
+          return False
+        if desc in invalid_keywords or subsys.isdigit():
+          return False
+        if desc in ["NAN", "NONE", "", "0", "-"]:
+          return False
+        return True
+
+      mask_clean = df_c.apply(is_valid_bd_row, axis=1)
+      df_c = df_c[mask_clean]
+
+      if df_c.empty:
+        continue
+
+      df_c.insert(0, "Bulan", str(b_tag))
+
+      for qc_unit in all_standard_qcs:
+        if qc_unit not in df_c.columns:
+          df_c[qc_unit] = 0
+        else:
+          df_c[qc_unit] = (
+              pd.to_numeric(df_c[qc_unit], errors="coerce")
+              .fillna(0)
+              .astype(int)
+          )
+
+      fixed_cols = [
+          c
+          for c in ["Bulan", "Description", "Nama Subsystem"]
+          if c in df_c.columns
+      ]
+      crane_cols = sorted(all_standard_qcs)
+      total_cols = [
+          c
+          for c in df_c.columns
+          if "TOTAL" in str(c).strip().upper()
+          or "BD ASSET" in str(c).strip().upper()
+      ]
+      other_cols = [
+          c
+          for c in df_c.columns
+          if c not in fixed_cols and c not in crane_cols and c not in total_cols
+      ]
+
+      final_col_order = fixed_cols + crane_cols + other_cols + total_cols
+      final_col_order = list(dict.fromkeys(final_col_order))
+
+      df_c = df_c[[c for c in final_col_order if c in df_c.columns]]
+      bd_frames.append(df_c)
+
+  if bd_frames:
+    cleaned_frames = []
+    for df_f in bd_frames:
+      df_f = df_f.loc[:, ~df_f.columns.duplicated()]
+      cleaned_frames.append(df_f)
+
+    merged = pd.concat(cleaned_frames, ignore_index=True)
+    text_cols = [c for c in merged.columns if c not in all_standard_qcs]
+    merged[text_cols] = (
+        merged[text_cols].fillna("-").replace(["nan", "None", "NaT", ""], "-")
+    )
+    merged[all_standard_qcs] = merged[all_standard_qcs].fillna(0).astype(int)
+    return len(merged), merged
+
+  return 0, pd.DataFrame()
+
+
+def format_time_no_seconds(val):
+  if pd.isna(val) or str(val).strip() in ["-", "", "nan", "None", "NaT"]:
+    return "-"
+  val_str = str(val).strip()
+  if " " in val_str:
+    val_str = val_str.split()[-1]
+  if ":" in val_str:
+    parts = val_str.split(":")
+    if len(parts) >= 2:
+      return f"{parts[0].zfill(2)}:{parts[1].zfill(2)}"
+  return val_str
+
+
+def format_date_only(val):
+  if pd.isna(val) or str(val).strip() in ["-", "", "nan", "None", "NaT"]:
+    return "-"
+  val_str = str(val).strip()
+  if " " in val_str:
+    val_str = val_str.split()[0]
+  dt = pd.to_datetime(val_str, errors="coerce")
+  if pd.notna(dt):
+    return dt.strftime("%Y-%m-%d")
+  return val_str
+
+
+def calculate_wo_duration(row):
+  try:
+    d_start_raw = str(
+        row.get("DATE Start", "") if pd.notna(row.get("DATE Start")) else ""
+    )
+    t_start_raw = str(
+        row.get("TIME Start", "") if pd.notna(row.get("TIME Start")) else ""
+    )
+    d_finish_raw = str(
+        row.get("DATE Finish", "") if pd.notna(row.get("DATE Finish")) else ""
+    )
+    t_finish_raw = str(
+        row.get("TIME Finish", "") if pd.notna(row.get("TIME Finish")) else ""
+    )
+
+    if (
+        d_finish_raw in ["", "-", "nan"]
+        and "DOC DATE/ SCH" in row
+        and pd.notna(row["DOC DATE/ SCH"])
+    ):
+      doc_raw = str(row["DOC DATE/ SCH"]).strip()
+      if " " in doc_raw:
+        d_finish_raw, t_finish_raw = (
+            doc_raw.split()[0],
+            doc_raw.split()[-1],
+        )
+
+    d_start = d_start_raw.split()[0] if d_start_raw else ""
+    t_start = t_start_raw.split()[-1] if t_start_raw else ""
+    d_finish = d_finish_raw.split()[0] if d_finish_raw else ""
+    t_finish = t_finish_raw.split()[-1] if t_finish_raw else ""
+
+    start_dt = pd.to_datetime(f"{d_start} {t_start}".strip(), errors="coerce")
+    finish_dt = pd.to_datetime(
+        f"{d_finish} {t_finish}".strip(), errors="coerce"
+    )
+
+    if pd.isna(start_dt) or pd.isna(finish_dt):
+      return "-"
+
+    diff = finish_dt - start_dt
+    total_seconds = int(diff.total_seconds())
+
+    if total_seconds <= 0:
+      return "-"
+
+    hrs = total_seconds // 3600
+    mins = (total_seconds % 3600) // 60
+
+    if hrs > 0 and mins > 0:
+      return f"{hrs} Jam {mins} Menit"
+    elif hrs > 0:
+      return f"{hrs} Jam"
+    elif mins > 0:
+      return f"{mins} Menit"
+    else:
+      return "< 1 Menit"
+  except Exception:
+    return "-"
+
+
+def parse_clean_wo(data_sheets):
+  wo_frames = []
+  for sname, df in data_sheets.items():
+    if df.empty or sname == "EMPTY":
+      continue
+
+    upper_sname = str(sname).upper()
+    if any(
+        k in upper_sname for k in ["WORK", "LIST OF WORK", "WO", "WORK ORDER"]
+    ):
+      df_c = df.dropna(how="all").copy()
+
+      header_idx = None
+      for i in range(min(10, len(df_c))):
+        row_str = " ".join(df_c.iloc[i].dropna().astype(str)).upper()
+        if any(
+            k in row_str
+            for k in ["WORK ORDER", "DESCRIPTION", "ASSET", "PROBLEM CODE"]
+        ):
+          header_idx = i
+          break
+
+      if header_idx is not None:
+        df_c.columns = df_c.iloc[header_idx].astype(str).str.strip()
+        df_c = df_c.iloc[header_idx + 1 :].copy()
+
+      drop_cancel_cols = [
+          c
+          for c in df_c.columns
+          if "CANCEL" in str(c).upper() or "DIHAPUS" in str(c).upper()
+      ]
+      if drop_cancel_cols:
+        df_c = df_c.drop(columns=drop_cancel_cols)
+
+      def is_valid_wo_row(r):
+        desc = str(r.get("Description", "")).strip().lower()
+        task = str(r.get("TASK", "")).strip().lower()
+        wo_num = str(r.get("Work Order", "")).strip().lower()
+        invalid_vals = ["", "nan", "none", "-", "nat", "0"]
+        return (
+            (desc not in invalid_vals)
+            or (task not in invalid_vals)
+            or (wo_num not in invalid_vals)
+        )
+
+      valid_mask = df_c.apply(is_valid_wo_row, axis=1)
+      df_c = df_c[valid_mask]
+
+      if df_c.empty:
+        continue
+
+      for col in df_c.columns:
+        c_up = str(col).strip().upper()
+        if "DATE" in c_up and "TIME" not in c_up:
+          df_c[col] = df_c[col].apply(format_date_only)
+        elif "TIME" in c_up:
+          df_c[col] = df_c[col].apply(format_time_no_seconds)
+
+      df_c["DURATION"] = df_c.apply(calculate_wo_duration, axis=1)
+
+      date_col = None
+      for col in df_c.columns:
+        c_up = str(col).strip().upper()
+        if "DOC. DATE" in c_up or "DATE START" in c_up or "DATE" in c_up:
+          date_col = col
+          break
+
+      if date_col:
+        dt_series = pd.to_datetime(df_c[date_col], errors="coerce")
+        df_c["Tanggal"] = dt_series.dt.day.apply(
+            lambda x: f"Tgl {int(x):02d}" if pd.notna(x) else "Lainnya"
+        )
+      else:
+        df_c["Tanggal"] = "Semua Tanggal"
+
+      b_tag = "Umum"
+      for m in MONTH_LIST:
+        if m.lower() in upper_sname.lower():
+          b_tag = m
+          break
+      if "BULAN_TAG" in df_c.columns:
+        val_tag = (
+            str(df_c["BULAN_TAG"].iloc[0]).strip() if not df_c.empty else ""
+        )
+        if val_tag != "" and val_tag.lower() != "nan":
+          b_tag = val_tag
+
+      dup_cols = [
+          c
+          for c in df_c.columns
+          if str(c).strip().upper() in ["BULAN", "BULAN_TAG"]
+      ]
+      if dup_cols:
+        df_c = df_c.drop(columns=dup_cols)
+
+      df_c.insert(0, "Bulan", str(b_tag))
+      wo_frames.append(df_c)
+
+  if wo_frames:
+    merged = pd.concat(wo_frames, ignore_index=True)
+    merged = merged.fillna("-").replace(
+        ["nan", "None", "NaT", "", "0000-00-00 00:00:00"], "-"
+    )
+    merged = merged.loc[:, (merged != "-").any(axis=0)]
+    merged = merged.loc[:, ~merged.columns.duplicated()]
     return merged
 
+  return pd.DataFrame()
 
-# ---------------------------------------------------------
-# 5. SIDEBAR
-# ---------------------------------------------------------
-st.sidebar.markdown("### 👤 Informasi User")
-st.sidebar.info("Logged in as: **Administrator**")
 
-st.sidebar.divider()
-st.sidebar.markdown("### 🔑 Pengaturan API Key AI")
-input_key = st.sidebar.text_input(
-    "Masukkan API Key Gemini (Opsional):",
-    value=st.session_state.user_api_key,
-    type="password",
-    help="Tempel API Key asli kamu di sini jika di Secrets belum terpasang!",
+# Load Database
+st.session_state.data_sheets = load_master_database()
+
+# Load Extracted Data
+df_prod = parse_daily_boxes(st.session_state.data_sheets)
+df_wo = parse_clean_wo(st.session_state.data_sheets)
+total_bd_events, df_bd_clean = parse_clean_breakdown(
+    st.session_state.data_sheets
 )
-if input_key != st.session_state.user_api_key:
-    st.session_state.user_api_key = input_key
-    st.rerun()
 
-st.sidebar.divider()
+# Opsi Bulan yang Tersedia
+available_months_set = set()
+if not df_prod.empty:
+  available_months_set.update(df_prod["Bulan"].unique())
+if not df_bd_clean.empty:
+  available_months_set.update(df_bd_clean["Bulan"].unique())
+if not df_wo.empty:
+  available_months_set.update(df_wo["Bulan"].unique())
 
-if st.sidebar.button("🗑️ Reset Database Master"):
-    if os.path.exists(MASTER_FILE):
-        os.remove(MASTER_FILE)
-    st.session_state.data_sheets = {}
-    st.session_state.messages = []
-    st.sidebar.success("Database berhasil dikosongkan!")
-    st.rerun()
+global_month_options = ["Semua Bulan"] + sorted(list(available_months_set))
+
+if "shared_selected_month" not in st.session_state:
+  st.session_state.shared_selected_month = global_month_options[0]
+
+# =========================================================
+# 🎛️ SIDEBAR
+# =========================================================
+st.sidebar.markdown("### 👤 User: Administrator")
+st.sidebar.caption("📁 Master Database Status: Synchronized")
+
+if st.sidebar.button("🗑️ Reset/Hapus Database Master"):
+  safe_reset_database()
+  st.sidebar.success("Database berhasil di-reset!")
+  st.rerun()
 
 if st.sidebar.button("🚪 Keluar"):
-    st.session_state.logged_in = False
-    st.rerun()
+  st.session_state.logged_in = False
+  st.rerun()
 
 st.sidebar.divider()
-st.sidebar.markdown("### 📁 Upload File Performance Excel")
+st.sidebar.markdown("### 📁 Upload File Excel Baru")
+
+target_month = st.sidebar.selectbox(
+    "Labeli File Sebagai Bulan:", ["Otomatis"] + MONTH_LIST
+)
+
 uploaded_files = st.sidebar.file_uploader(
-    "Unggah file Excel (bisa lebih dari 1 file):",
+    "Unggah File Excel:",
     type=["xlsx", "xls"],
     accept_multiple_files=True,
+    key=f"uploader_{st.session_state.uploader_key}",
 )
 
 if uploaded_files:
-    if st.sidebar.button("📥 Proses & Gabungkan Ke Database"):
-        merged_db = process_and_merge_files(uploaded_files)
-        st.session_state.data_sheets = merged_db
-        save_master_database(merged_db)
-        st.sidebar.success("✅ Data baru berhasil digabungkan tanpa menghapus data lama!")
-        st.rerun()
+  if st.sidebar.button("📥 Simpan ke Database"):
+    merged_db = process_and_merge_files(uploaded_files, target_month)
+    st.session_state.data_sheets = merged_db
+    st.session_state.uploader_key += 1
+    st.sidebar.success("✅ Data berhasil disimpan secara permanen!")
+    st.rerun()
 
-# ---------------------------------------------------------
-# 6. DASHBOARD UTAMA
-# ---------------------------------------------------------
+# Dashboard Utama Header
 st.markdown(
     """
     <div class="main-header">
@@ -208,231 +865,455 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-df_wo = pd.DataFrame()
-for key in st.session_state.data_sheets.keys():
-    if "WORK ORDER" in key.upper() or "WO" in key.upper():
-        df_wo = st.session_state.data_sheets[key]
-        break
-
-df_bd_freq = pd.DataFrame()
-for key in st.session_state.data_sheets.keys():
-    if "FREQ" in key.upper():
-        df_bd_freq = st.session_state.data_sheets[key]
-        break
-
-# ---------------------------------------------------------
-# 7. TAB APLIKASI
-# ---------------------------------------------------------
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 Ringkasan Kinerja Harian",
-    "🚨 Rincian Berdasarkan Frekuensi",
-    "📈 Analisis Diagram",
-    "📋 Daftar Perintah Kerja (WO)",
-    "🤖 Asisten Analis AI",
+    "📊 Ringkasan Kinerja",
+    "🚨 Rincian Breakdown",
+    "📈 Diagram Analytics",
+    "📋 Work Order (WO)",
+    "🤖 Asisten AI",
 ])
 
-# FUNGSI PEMBERSIH UNTUK HEADER & SEL KOSONG
-def clean_excel_dataframe(df):
-    if df is None or df.empty:
-        return pd.DataFrame()
-    
-    # Buang baris dan kolom yang 100% kosong
-    df_clean = df.dropna(how="all").dropna(how="all", axis=1)
-    
-    # Cari baris yang kemungkinan header asli (berisi teks tidak kosong paling banyak)
-    valid_row_idx = None
-    for idx, row in df_clean.head(10).iterrows():
-        non_null_count = row.notnull().sum()
-        if non_null_count >= 3:
-            valid_row_idx = idx
-            break
-            
-    if valid_row_idx is not None and valid_row_idx > 0:
-        new_header = df_clean.loc[valid_row_idx].values
-        df_clean = df_clean.iloc[valid_row_idx + 1:].copy()
-        df_clean.columns = new_header
-        
-    df_clean = df_clean.fillna("")
-    # Buang kolom yang namanya kosong/Unnamed
-    df_clean = df_clean.loc[:, ~df_clean.columns.astype(str).str.startswith("Unnamed")]
-    return df_clean
-
+# ---------------------------------------------------------
+# TAB 1: RINGKASAN KINERJA
+# ---------------------------------------------------------
 with tab1:
-    st.subheader("Matriks Kinerja Harian Crane (Bersih & Rapi)")
-    sd_sheet = None
-    for k in st.session_state.data_sheets.keys():
-        if "SUMMARY" in k.upper() or "DAILY" in k.upper():
-            sd_sheet = st.session_state.data_sheets[k]
-            break
-            
-    if sd_sheet is not None and not sd_sheet.empty:
-        sd_sheet_clean = clean_excel_dataframe(sd_sheet)
-        st.dataframe(sd_sheet_clean, use_container_width=True)
-    else:
-        st.info("Unggah berkas Excel di sidebar untuk melihat data harian.")
+  curr_m = st.session_state.shared_selected_month
+  f_prod = (
+      df_prod if curr_m == "Semua Bulan" else df_prod[df_prod["Bulan"] == curr_m]
+  )
+  f_wo = df_wo if curr_m == "Semua Bulan" else df_wo[df_wo["Bulan"] == curr_m]
+  f_bd = (
+      df_bd_clean
+      if curr_m == "Semua Bulan"
+      else df_bd_clean[df_bd_clean["Bulan"] == curr_m]
+  )
 
+  col_m1, col_d1 = st.columns(2)
+  with col_m1:
+    st.selectbox(
+        "📅 **Pilih Bulan:**",
+        options=global_month_options,
+        key="shared_selected_month",
+    )
+
+  with col_d1:
+    if not f_prod.empty:
+      sorted_dates = (
+          f_prod[["DayNum", "Tanggal"]].drop_duplicates().sort_values("DayNum")
+      )
+      avail_d = ["Semua Tanggal (Full Month)"] + list(sorted_dates["Tanggal"])
+    else:
+      avail_d = ["Semua Tanggal (Full Month)"]
+
+    sel_d = st.selectbox(
+        "📆 **Pilih Tanggal (Drill-Down Harian):**", options=avail_d
+    )
+
+  st.subheader(f"📌 Ringkasan Eksekutif Operasional ({curr_m})")
+
+  if st.session_state.data_sheets and any(
+      k != "EMPTY" for k in st.session_state.data_sheets.keys()
+  ):
+    c1, c2, c3, c4 = st.columns(4)
+    tot_b = int(f_prod["Boxes"].sum()) if not f_prod.empty else 0
+    c1.markdown(
+        f'<div class="metric-card"><div class="metric-label">📦 Total'
+        f' Produksi</div><div class="metric-value">{tot_b:,} Boxes</div></div>',
+        unsafe_allow_html=True,
+    )
+    c2.markdown(
+        f'<div class="metric-card"><div class="metric-label">📋 Total Work'
+        f' Order</div><div class="metric-value">{len(f_wo):,} WO</div></div>',
+        unsafe_allow_html=True,
+    )
+    c3.markdown(
+        f'<div class="metric-card"><div class="metric-label">🚨 Record'
+        f' Breakdown</div><div class="metric-value">{len(f_bd):,}'
+        " Event</div></div>",
+        unsafe_allow_html=True,
+    )
+    c4.markdown(
+        '<div class="metric-card"><div class="metric-label">🤖 Status AI'
+        f' System</div><div class="metric-value">{"🟢 Aktif" if ai_is_active else "🔴 Nonaktif"}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    st.divider()
+
+    if not f_prod.empty:
+      if sel_d != "Semua Tanggal (Full Month)":
+        final_filtered = f_prod[f_prod["Tanggal"] == sel_d]
+      else:
+        final_filtered = f_prod
+
+      for m_name, grp_m in final_filtered.groupby("Bulan"):
+        header_title = (
+            f"📅 BULAN: {str(m_name).upper()}"
+            if sel_d == "Semua Tanggal (Full Month)"
+            else f"📅 BULAN: {str(m_name).upper()} ({sel_d})"
+        )
+        st.markdown(
+            f'<div class="month-header">{header_title}</div>',
+            unsafe_allow_html=True,
+        )
+
+        asset_grp = (
+            grp_m.groupby("Asset", as_index=False)["Boxes"]
+            .sum()
+            .reset_index(drop=True)
+        )
+
+        cols = st.columns(4)
+        for idx, r in asset_grp.iterrows():
+          cols[idx % 4].markdown(
+              '<div class="stat-box"><div'
+              f' class="stat-title">UNIT {r["Asset"]}</div><div'
+              f' class="stat-num">{int(r["Boxes"]):,} Boxes</div></div>',
+              unsafe_allow_html=True,
+          )
+  else:
+    st.info(
+        "Database kosong. Unggah file Excel di sidebar lalu klik 'Simpan ke"
+        " Database'."
+    )
+
+# ---------------------------------------------------------
+# TAB 2: RINCIAN BREAKDOWN (QC01 - QC25 URUT PAS)
+# ---------------------------------------------------------
 with tab2:
-    st.subheader("🚨 Frekuensi Breakdown per Subsystem & Asset CC")
-    if not df_bd_freq.empty:
-        df_freq_clean = clean_excel_dataframe(df_bd_freq)
-        st.dataframe(df_freq_clean, use_container_width=True)
-    else:
-        st.info("Belum ada data frekuensi breakdown.")
+  st.subheader("🚨 Rincian Kejadian Breakdown Container Crane (QC01 - QC25)")
 
+  if not df_bd_clean.empty:
+    col_bd_m, col_bd_d = st.columns(2)
+
+    with col_bd_m:
+      sel_bd_month = st.selectbox(
+          "📅 **Pilih Bulan Breakdown:**",
+          options=global_month_options,
+          key="bd_selected_month",
+      )
+
+    df_show_bd = (
+        df_bd_clean
+        if sel_bd_month == "Semua Bulan"
+        else df_bd_clean[df_bd_clean["Bulan"] == sel_bd_month]
+    )
+
+    with col_bd_d:
+      if "Tanggal" in df_show_bd.columns and not df_show_bd.empty:
+        avail_bd_dates = ["Semua Tanggal (Full Month)"] + sorted(
+            [t for t in df_show_bd["Tanggal"].unique() if t != "Lainnya"]
+        )
+      else:
+        avail_bd_dates = ["Semua Tanggal (Full Month)"]
+
+      sel_bd_date = st.selectbox(
+          "📆 **Pilih Tanggal Breakdown:**",
+          options=avail_bd_dates,
+          key="bd_selected_date",
+      )
+
+    if (
+        sel_bd_date != "Semua Tanggal (Full Month)"
+        and "Tanggal" in df_show_bd.columns
+    ):
+      df_show_bd = df_show_bd[df_show_bd["Tanggal"] == sel_bd_date]
+
+    col_b1, col_b2 = st.columns([2, 1])
+    with col_b1:
+      st.write(
+          f"Tampilan rincian breakdown untuk **{sel_bd_month}** |"
+          f" **{sel_bd_date}** (QC01 - QC25 terurut presisi)."
+      )
+    with col_b2:
+      search_bd = st.text_input(
+          "🔍 Cari Kata Kunci:", "", key="search_bd_input"
+      )
+
+    if search_bd:
+      mask = df_show_bd.astype(str).apply(
+          lambda row: row.str.contains(search_bd, case=False).any(), axis=1
+      )
+      df_show_bd = df_show_bd[mask]
+
+    st.dataframe(df_show_bd, use_container_width=True, height=500)
+  else:
+    st.info("Belum ada data breakdown yang tersimpan.")
+
+# ---------------------------------------------------------
+# TAB 3: DIAGRAM ANALYTICS
+# ---------------------------------------------------------
 with tab3:
-    st.subheader("📈 Visualisasi Diagram & Trend Kinerja")
-    if not df_wo.empty:
-        col_g1, col_g2 = st.columns(2)
+  st.subheader("📈 Visualisasi Diagram Analytics (Tema Pelindo Blue)")
 
-        with col_g1:
-            st.markdown("##### **Distribusi Problem Code (Bar Chart)**")
-            prob_cols = [
-                c
-                for c in df_wo.columns
-                if "PROBLEM" in str(c).upper() or "CODE" in str(c).upper()
-            ]
-            if prob_cols:
-                prob_counts = (
-                    df_wo[prob_cols[0]]
-                    .value_counts()
-                    .reset_index()
-                    .head(7)
-                )
-                prob_counts.columns = ["Problem_Code", "Jumlah"]
-                fig_prob = px.bar(
-                    prob_counts,
-                    x="Problem_Code",
-                    y="Jumlah",
-                    text="Jumlah",
-                    color="Jumlah",
-                    color_continuous_scale="Reds",
-                )
-                st.plotly_chart(fig_prob, use_container_width=True)
+  if not df_prod.empty or not df_bd_clean.empty:
+    col_m_analytics, col_d_analytics = st.columns(2)
 
-        with col_g2:
-            st.markdown(
-                "##### **Proporsi Breakdown per Subsystem / Asset (Diagram Lingkaran)**"
-            )
-            asset_cols = [
-                c for c in df_wo.columns if "ASSET" in str(c).upper()
-            ]
-            if asset_cols:
-                asset_counts = (
-                    df_wo[asset_cols[0]].value_counts().reset_index().head(6)
-                )
-                asset_counts.columns = ["Asset", "Total_WO"]
+    with col_m_analytics:
+      sel_m_analytics = st.selectbox(
+          "📅 **Pilih Bulan Analytics:**",
+          options=global_month_options,
+          key="analytics_selected_month",
+      )
 
-                fig_pie = px.pie(
-                    asset_counts,
-                    names="Asset",
-                    values="Total_WO",
-                    hole=0.4,
-                    color_discrete_sequence=px.colors.qualitative.Set1,
-                )
-                fig_pie.update_traces(
-                    textposition="inside", textinfo="percent+label"
-                )
-                st.plotly_chart(fig_pie, use_container_width=True)
+    f_prod_chart = (
+        df_prod
+        if sel_m_analytics == "Semua Bulan"
+        else df_prod[df_prod["Bulan"] == sel_m_analytics]
+    )
+    f_bd_chart = (
+        df_bd_clean
+        if sel_m_analytics == "Semua Bulan"
+        else df_bd_clean[df_bd_clean["Bulan"] == sel_m_analytics]
+    )
+
+    with col_d_analytics:
+      if not f_prod_chart.empty:
+        sorted_dates = (
+            f_prod_chart[["DayNum", "Tanggal"]]
+            .drop_duplicates()
+            .sort_values("DayNum")
+        )
+        avail_d = ["Semua Tanggal (Full Month)"] + list(sorted_dates["Tanggal"])
+      else:
+        avail_d = ["Semua Tanggal (Full Month)"]
+
+      sel_d_analytics = st.selectbox(
+          "📆 **Pilih Tanggal Analytics:**",
+          options=avail_d,
+          key="analytics_selected_date",
+      )
+
+    if sel_d_analytics != "Semua Tanggal (Full Month)":
+      f_prod_chart = f_prod_chart[f_prod_chart["Tanggal"] == sel_d_analytics]
+
+    filter_label = f"{sel_m_analytics} - {sel_d_analytics}"
+
+    st.divider()
+
+    g_col1, g_col2 = st.columns(2)
+
+    with g_col1:
+      st.markdown("##### **1. Produksi Boxes per Unit Crane**")
+      if not f_prod_chart.empty:
+        df_chart_prod = (
+            f_prod_chart.groupby("Asset", as_index=False)["Boxes"]
+            .sum()
+            .sort_values("Boxes", ascending=False)
+        )
+        fig_bar = px.bar(
+            df_chart_prod,
+            x="Asset",
+            y="Boxes",
+            text="Boxes",
+            color="Boxes",
+            color_continuous_scale=PELINDO_GRADIENT,
+            title=f"Total Produksi per Unit CC ({filter_label})",
+        )
+        fig_bar.update_traces(textposition="outside")
+        fig_bar.update_layout(coloraxis_showscale=False)
+        st.plotly_chart(fig_bar, use_container_width=True)
+      else:
+        st.info(f"Data produksi belum tersedia untuk filter ({filter_label}).")
+
+    with g_col2:
+      st.markdown("##### **2. Proporsi Breakdown Subsystem (BIG 6)**")
+      if not f_bd_chart.empty:
+        try:
+          qc_cols = [
+              c for c in f_bd_chart.columns if re.search(r"QC\d+", str(c))
+          ]
+          df_pie = f_bd_chart.copy()
+          df_pie["Total_Events"] = (
+              df_pie[qc_cols]
+              .apply(pd.to_numeric, errors="coerce")
+              .fillna(0)
+              .sum(axis=1)
+          )
+
+          df_pie_sum = (
+              df_pie.groupby("Nama Subsystem", as_index=False)["Total_Events"]
+              .sum()
+              .sort_values("Total_Events", ascending=False)
+              .head(6)
+          )
+
+          fig_pie = px.pie(
+              df_pie_sum,
+              names="Nama Subsystem",
+              values="Total_Events",
+              hole=0.35,
+              color_discrete_sequence=PELINDO_GRADIENT,
+              title=f"BIG 6 Breakdown Subsystem ({filter_label})",
+          )
+          fig_pie.update_traces(textinfo="percent+label")
+          st.plotly_chart(fig_pie, use_container_width=True)
+        except Exception:
+          st.info("Gagal menampilkan diagram pie breakdown.")
+      else:
+        st.info(f"Data breakdown belum tersedia untuk filter ({filter_label}).")
+
+    st.divider()
+
+    st.markdown("##### **3. Tren Produksi Harian (Daily Production Trend)**")
+    if not f_prod_chart.empty:
+      df_line_trend = (
+          f_prod_chart.groupby(["DayNum", "Tanggal"], as_index=False)["Boxes"]
+          .sum()
+          .sort_values("DayNum")
+      )
+      fig_line = px.line(
+          df_line_trend,
+          x="Tanggal",
+          y="Boxes",
+          markers=True,
+          title=f"Tren Produksi Boxes ({filter_label})",
+          color_discrete_sequence=["#003874"],
+      )
+      fig_line.update_traces(
+          line=dict(width=3), marker=dict(size=8), textposition="top center"
+      )
+      fig_line.update_layout(
+          xaxis_title="Tanggal",
+          yaxis_title="Jumlah Boxes",
+          hovermode="x unified",
+      )
+      st.plotly_chart(fig_line, use_container_width=True)
     else:
-        st.info("Diagram akan otomatis ditampilkan setelah file Excel dimuat.")
+      st.info(
+          f"Data tren produksi harian belum tersedia untuk filter ({filter_label})."
+      )
 
+  else:
+    st.info("Data analytics belum tersedia.")
+
+# ---------------------------------------------------------
+# TAB 4: WORK ORDER (WO)
+# ---------------------------------------------------------
 with tab4:
-    st.subheader("Daftar Perintah Kerja (Work Orders)")
-    if not df_wo.empty:
-        df_wo_clean = clean_excel_dataframe(df_wo)
-        st.dataframe(df_wo_clean, use_container_width=True)
-    else:
-        st.info("Data Work Order kosong.")
+  st.subheader("📋 Daftar Perintah Kerja (Work Orders)")
 
+  if not df_wo.empty:
+    col_wo_m, col_wo_d = st.columns(2)
+
+    with col_wo_m:
+      sel_wo_month = st.selectbox(
+          "📅 **Pilih Bulan Work Order:**",
+          options=global_month_options,
+          key="wo_selected_month",
+      )
+
+    f_wo_tab = (
+        df_wo
+        if sel_wo_month == "Semua Bulan"
+        else df_wo[df_wo["Bulan"] == sel_wo_month]
+    )
+
+    with col_wo_d:
+      if "Tanggal" in f_wo_tab.columns and not f_wo_tab.empty:
+        avail_wo_dates = ["Semua Tanggal (Full Month)"] + sorted(
+            [t for t in f_wo_tab["Tanggal"].unique() if t != "Lainnya"]
+        )
+      else:
+        avail_wo_dates = ["Semua Tanggal (Full Month)"]
+
+      sel_wo_date = st.selectbox(
+          "📆 **Pilih Tanggal Work Order:**",
+          options=avail_wo_dates,
+          key="wo_selected_date",
+      )
+
+    if sel_wo_date != "Semua Tanggal (Full Month)":
+      f_wo_tab = f_wo_tab[f_wo_tab["Tanggal"] == sel_wo_date]
+
+    st.markdown(
+        f"**Menampilkan data WO untuk:** `{sel_wo_month}` | `{sel_wo_date}`"
+    )
+    st.dataframe(f_wo_tab, use_container_width=True, height=500)
+  else:
+    st.info("Data Work Order belum tersedia.")
+
+# ---------------------------------------------------------
+# TAB 5: ASISTEN AI (VERSI CEPAT & PRESISI)
+# ---------------------------------------------------------
 with tab5:
-    st.subheader("🤖 Asisten Analis AI Pemeliharaan Crane")
-    if not ai_is_active:
-        st.warning(
-            "⚠️ API Key belum terpasang atau tidak valid. Silakan masukkan API Key Gemini kamu di menu Sidebar sebelah kiri!"
-        )
+  st.subheader("🤖 Asisten AI Pemeliharaan Crane")
 
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
+  active_key = clean_api_key
+  if not active_key or "ISI_DENGAN" in active_key:
+    st.warning("⚠️ API Key Gemini belum terkonfigurasi di `API_KEY_KAMU`.")
+    user_key_input = st.text_input(
+        "🔑 Masukkan API Key Gemini Kamu (diawali 'AIzaSy...'):",
+        type="password",
+        key="user_gemini_key",
+    )
+    if user_key_input:
+      active_key = user_key_input.strip()
 
-    user_query = st.chat_input("Ketik pertanyaan analisis kamu di sini...")
+  for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+      st.write(msg["content"])
 
-    if user_query:
-        st.session_state.messages.append(
-            {"role": "user", "content": user_query}
-        )
-        with st.chat_message("user"):
-            st.write(user_query)
+  user_query = st.chat_input("Ketik pertanyaan analisis kamu di sini...")
 
-        if not ai_is_active:
-            err_msg = "AI belum aktif. Silakan masukkan API Key di menu Sidebar kiri terlebih dahulu."
-            st.session_state.messages.append(
-                {"role": "assistant", "content": err_msg}
-            )
-            with st.chat_message("assistant"):
-                st.error(err_msg)
-        else:
-            grouped_context = "=== DATABASE KESELURUHAN TERKELOMPOK PER CONTAINER CRANE (CC/QC) ===\n\n"
-            if not df_wo.empty:
-                asset_cols = [
-                    c for c in df_wo.columns if "ASSET" in str(c).upper()
-                ]
-                if asset_cols:
-                    grouped_assets = df_wo.groupby(asset_cols[0])
-                    for asset_name, group in grouped_assets:
-                        grouped_context += f"--- UNIT CONTAINER CRANE: {asset_name} (Total: {len(group)} WO) ---\n"
-                        grouped_context += group.fillna("").astype(str).to_csv(
-                            index=False
-                        )
-                        grouped_context += "\n"
-                else:
-                    grouped_context += df_wo.fillna("").astype(str).to_csv(
-                        index=False
-                    )
+  if user_query:
+    st.session_state.messages.append({"role": "user", "content": user_query})
+    with st.chat_message("user"):
+      st.write(user_query)
 
-            for sname, df_s in st.session_state.data_sheets.items():
-                if "WORK ORDER" not in sname.upper() and not df_s.empty:
-                    grouped_context += f"\n=== SHEET STATISTIK: {sname} ===\n"
-                    grouped_context += df_s.fillna("").astype(str).to_csv(
-                        index=False
-                    )
+    if not active_key or "ISI_DENGAN" in active_key:
+      err_msg = "⚠️ Harap masukkan API Key Gemini yang valid."
+      st.session_state.messages.append(
+          {"role": "assistant", "content": err_msg}
+      )
+      with st.chat_message("assistant"):
+        st.error(err_msg)
+    else:
+      summary_prod = (
+          df_prod.to_string(index=False)
+          if not df_prod.empty
+          else "Data Produksi Kosong"
+      )
+      summary_bd = (
+          df_bd_clean.to_string(index=False)
+          if not df_bd_clean.empty
+          else "Data Breakdown Kosong"
+      )
+      summary_wo = (
+          df_wo[["Bulan", "Tanggal", "Work Order", "Description", "DURATION"]]
+          .head(100)
+          .to_string(index=False)
+          if not df_wo.empty
+          else "Data WO Kosong"
+      )
 
-            system_prompt = f"""
-            Kamu adalah Asisten AI Pakar Pemeliharaan & Senior Engineer Container Crane (CC).
+      optimized_context = f"""
+            Kamu adalah Asisten AI Senior Engineer Container Crane (CC).
+            Jawab pertanyaan pengguna secara cepat, akurat, langsung ke intinya, dan berbasis data di bawah.
 
-            TUGAS & PENALARAN SANGAT AKURAT:
-            1. Jawab pertanyaan pengguna dengan menganalisis KESELURUHAN data per-CC/Asset di bawah ini.
-            2. Hitung jumlah transaksi, jenis kerusakan, dan durasi secara eksak dari tabel data.
-            3. JIKA detail spesifik yang ditanyakan pengguna TIDAK ADA dalam catatan log:
-               - Jelaskan bahwa detail spesifik tersebut tidak tercatat di database.
-               - SEGERA BERIKAN rekomendasi teknis, standar SOP pemeliharaan (PM/CM), atau langkah-langkah troubleshooting standar untuk Container Crane yang valid, profesional, dan solutif.
-            4. Gunakan bahasa yang rapi, terstruktur, dan teknis.
+            === DATA PRODUKSI BOXES ===
+            {summary_prod[:10000]}
 
-            --- DATABASE PEMELIHARAAN CONTAINER CRANE (UTUH & KUMULATIF) ---
-            {grouped_context[:60000]}
+            === DATA BREAKDOWN (QC01 - QC25) ===
+            {summary_bd[:10000]}
+
+            === SAMPLE DATA WORK ORDER (WO) ===
+            {summary_wo[:10000]}
             """
 
-            full_prompt = f"{system_prompt}\n\nPertanyaan: {user_query}"
+      full_prompt = f"{optimized_context}\n\nPertanyaan User: {user_query}"
 
-            with st.chat_message("assistant"):
-                with st.spinner(
-                    "Menganalisis seluruh database & menyusun jawaban..."
-                ):
-                    try:
-                        model = genai.GenerativeModel("gemini-2.5-flash")
-                        response = model.generate_content(full_prompt)
-                        ai_reply = response.text
-                    except Exception:
-                        try:
-                            model = genai.GenerativeModel("gemini-2.5-pro")
-                            response = model.generate_content(full_prompt)
-                            ai_reply = response.text
-                        except Exception as ex:
-                            ai_reply = f"Gagal memproses analisis AI: {ex}"
+      with st.chat_message("assistant"):
+        with st.spinner("Menganalisis data..."):
+          try:
+            genai.configure(api_key=active_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(full_prompt)
+            ai_reply = response.text
+          except Exception as ex:
+            ai_reply = f"⚠️ Gagal memproses respon AI: {ex}"
 
-                    st.write(ai_reply)
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": ai_reply}
-                    )
-
-st.markdown("</div>", unsafe_allow_html=True)
+          st.write(ai_reply)
+          st.session_state.messages.append(
+              {"role": "assistant", "content": ai_reply}
+          )
