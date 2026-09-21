@@ -10,15 +10,17 @@ import streamlit as st
 # =========================================================
 # 🔑 KONFIGURASI API KEY GEMINI
 # =========================================================
-API_KEY_KAMU = "AQ.Ab8RN6I6EaoRZzCRPCab7Q-BGUeAA3_iVAzra4c11MhNhepG3A"
+API_KEY_KAMU = "AQ.Ab8RN6IVVot3bCb4xZm2UzyGEZEQLpONk6z1pXmz8q5-ro3f7A"
 clean_api_key = str(API_KEY_KAMU).strip().strip('"').strip("'")
 
-if (
-    not clean_api_key or clean_api_key == "AIzaSy..."
-) and "GEMINI_API_KEY" in st.secrets:
-  clean_api_key = (
-      str(st.secrets["GEMINI_API_KEY"]).strip().strip('"').strip("'")
-  )
+# Cek dari st.secrets jika ada secara aman
+try:
+  if "GEMINI_API_KEY" in st.secrets:
+    clean_api_key = (
+        str(st.secrets["GEMINI_API_KEY"]).strip().strip('"').strip("'")
+    )
+except Exception:
+  pass
 
 ai_is_active = False
 if clean_api_key and len(clean_api_key) > 10:
@@ -265,10 +267,8 @@ if "messages" not in st.session_state:
 # 🔒 PORTAL LOGIN (Luar)
 # =========================================================
 if not st.session_state.logged_in:
-  # Background gambar tajam untuk halaman login
   st.markdown(f"<style>{login_bg_style}</style>", unsafe_allow_html=True)
 
-  # Header Login Biru Polos Kosongan
   st.markdown(
       """
         <div class="login-header">
@@ -283,11 +283,20 @@ if not st.session_state.logged_in:
   with col2:
     with st.form("login_form"):
       st.markdown(
-          "<h3 style='text-align: center; color: #002D62; margin-top: 0px; margin-bottom: 20px;'>Masuk Akun Administrator</h3>",
+          "<h3 style='text-align: center; color: #002D62; margin-top: 0px;"
+          " margin-bottom: 20px;'>Masuk Akun Administrator</h3>",
           unsafe_allow_html=True,
       )
-      u = st.text_input("Username", value="admin")
-      p = st.text_input("Password", type="password", value="admin123")
+
+      # Field terisi kosong agar pengguna mengetik manual
+      u = st.text_input("Username", value="", placeholder="Masukkan username")
+      p = st.text_input(
+          "Password",
+          type="password",
+          value="",
+          placeholder="Masukkan password",
+      )
+
       submitted = st.form_submit_button(
           "Masuk Aplikasi", use_container_width=True
       )
@@ -296,7 +305,7 @@ if not st.session_state.logged_in:
           st.session_state.logged_in = True
           st.rerun()
         else:
-          st.error("Kredensial salah!")
+          st.error("Kredensial salah! Silakan periksa username dan password.")
   st.stop()
 
 # Set background bersih terang khusus area Dashboard Dalam
@@ -1234,22 +1243,28 @@ with tab4:
     st.info("Data Work Order belum tersedia.")
 
 # ---------------------------------------------------------
-# TAB 5: ASISTEN AI (VERSI CEPAT & PRESISI)
+# TAB 5: ASISTEN AI (SUPER KILAT & ULTRA FAST)
 # ---------------------------------------------------------
 with tab5:
   st.subheader("🤖 Asisten AI Pemeliharaan Crane")
 
-  active_key = clean_api_key
-  if not active_key or "ISI_DENGAN" in active_key:
-    st.warning("⚠️ API Key Gemini belum terkonfigurasi di `API_KEY_KAMU`.")
+  active_key = clean_api_key if len(clean_api_key) > 10 else ""
+
+  if not active_key:
+    st.warning(
+        "⚠️ **API Key Gemini belum terdeteksi.** Masukkan API Key kamu di bawah"
+        " ini."
+    )
     user_key_input = st.text_input(
-        "🔑 Masukkan API Key Gemini Kamu (diawali 'AIzaSy...'):",
+        "🔑 Masukkan API Key Gemini Kamu:",
         type="password",
         key="user_gemini_key",
+        placeholder="Tempel API Key di sini...",
     )
     if user_key_input:
       active_key = user_key_input.strip()
 
+  # Tampilkan riwayat percakapan
   for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
       st.write(msg["content"])
@@ -1261,57 +1276,95 @@ with tab5:
     with st.chat_message("user"):
       st.write(user_query)
 
-    if not active_key or "ISI_DENGAN" in active_key:
-      err_msg = "⚠️ Harap masukkan API Key Gemini yang valid."
+    if not active_key or len(active_key) <= 10:
+      err_msg = "⚠️ API Key tidak valid! Pastikan kamu sudah memasukkan API Key Gemini yang benar."
       st.session_state.messages.append(
           {"role": "assistant", "content": err_msg}
       )
       with st.chat_message("assistant"):
         st.error(err_msg)
     else:
-      summary_prod = (
-          df_prod.to_string(index=False)
-          if not df_prod.empty
-          else "Data Produksi Kosong"
-      )
-      summary_bd = (
-          df_bd_clean.to_string(index=False)
-          if not df_bd_clean.empty
-          else "Data Breakdown Kosong"
-      )
-      summary_wo = (
-          df_wo[["Bulan", "Tanggal", "Work Order", "Description", "DURATION"]]
-          .head(100)
-          .to_string(index=False)
-          if not df_wo.empty
-          else "Data WO Kosong"
-      )
+      # Deteksi Sapaan Umum (Biar Nggak Perlu Load Data Excel yang Berat)
+      greeting_keywords = [
+          "halo",
+          "hai",
+          "hi",
+          "permisi",
+          "pagi",
+          "siang",
+          "sore",
+          "malam",
+          "tes",
+          "test",
+      ]
+      is_simple_greeting = any(
+          k in user_query.lower().strip() for k in greeting_keywords
+      ) and len(user_query.split()) <= 3
 
-      optimized_context = f"""
-            Kamu adalah Asisten AI Senior Engineer Container Crane (CC).
-            Jawab pertanyaan pengguna secara cepat, akurat, langsung ke intinya, dan berbasis data di bawah.
+      if is_simple_greeting:
+        context_data = "User hanya menyapa, berikan salam balik yang ramah dan tanyakan apa yang bisa dibantu terkait crane."
+      else:
+        # Ekstrak kata kunci untuk pencarian data
+        keywords = [
+            w.lower()
+            for w in user_query.split()
+            if len(w) > 1 and w.lower() not in ["ada", "apa", "di", "ke", "bulan"]
+        ]
 
-            === DATA PRODUKSI BOXES ===
-            {summary_prod[:10000]}
+        def get_light_data(df, max_rows=15):
+          if df.empty:
+            return ""
+          if not keywords:
+            return df.head(max_rows).to_string(index=False)
 
-            === DATA BREAKDOWN (QC01 - QC25) ===
-            {summary_bd[:10000]}
+          # Filter baris yang cocok dengan kata kunci
+          mask = df.astype(str).apply(
+              lambda r: any(k in " ".join(r.values).lower() for k in keywords),
+              axis=1,
+          )
+          filtered = df[mask]
+          if not filtered.empty:
+            return filtered.head(max_rows).to_string(index=False)
+          return df.head(10).to_string(index=False)
 
-            === SAMPLE DATA WORK ORDER (WO) ===
-            {summary_wo[:10000]}
+        context_data = f"""
+                === DATA RELEVAN DASHBOARD ===
+                PRODUKSI:
+                {get_light_data(df_prod)}
+
+                BREAKDOWN:
+                {get_light_data(df_bd_clean)}
+
+                WORK ORDER:
+                {get_light_data(df_wo)}
+                """
+
+      # Prompt Ringkas
+      system_prompt = f"""
+            Kamu adalah Asisten AI Senior Maintenance Engineer Container Crane (CC) Pelindo.
+            Jawab ramah, lugas, presisi, dan berikan rekomendasi teknis jika ada kendala.
+
+            {context_data}
             """
 
-      full_prompt = f"{optimized_context}\n\nPertanyaan User: {user_query}"
+      full_prompt = f"{system_prompt}\n\nPertanyaan: {user_query}"
 
       with st.chat_message("assistant"):
-        with st.spinner("Menganalisis data..."):
+        with st.spinner("Menganalisis..."):
           try:
             genai.configure(api_key=active_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            # Menggunakan gemini-2.5-flash untuk kecepatan maksimal
+            model = genai.GenerativeModel("gemini-3.6-flash")
             response = model.generate_content(full_prompt)
             ai_reply = response.text
-          except Exception as ex:
-            ai_reply = f"⚠️ Gagal memproses respon AI: {ex}"
+          except Exception:
+            # Fallback ke gemini-1.5-flash jika versi 2.5 belum tersedia di region kamu
+            try:
+              model = genai.GenerativeModel("gemini-3.6-flash")
+              response = model.generate_content(full_prompt)
+              ai_reply = response.text
+            except Exception as ex:
+              ai_reply = f"⚠️ Gagal memproses respon AI: {ex}"
 
           st.write(ai_reply)
           st.session_state.messages.append(
