@@ -10,7 +10,7 @@ import streamlit as st
 # =========================================================
 # 🔑 KONFIGURASI API KEY GEMINI
 # =========================================================
-API_KEY_KAMU = "AQ.Ab8RN6IVVot3bCb4xZm2UzyGEZEQLpONk6z1pXmz8q5-ro3f7A"
+API_KEY_KAMU = "AQ.Ab8RN6LFg8VttMNr4tWkO7jbVVEwl0UdkW1ABl0mQfbxP25SaQ"
 clean_api_key = str(API_KEY_KAMU).strip().strip('"').strip("'")
 
 # Cek dari st.secrets jika ada secara aman
@@ -216,9 +216,10 @@ MONTH_LIST = [
 ]
 
 # =========================================================
-# 💾 DATABASE MANAGEMENT
+# 💾 DATABASE MANAGEMENT (LOKASI DILUAT SECARA PERMANEN)
 # =========================================================
-MASTER_FILE = "database_master.xlsx"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MASTER_FILE = os.path.join(BASE_DIR, "database_master.xlsx")
 
 
 def load_master_database():
@@ -227,18 +228,28 @@ def load_master_database():
     try:
       with pd.ExcelFile(MASTER_FILE) as xls:
         for sname in xls.sheet_names:
-          sheets[sname] = pd.read_excel(xls, sheet_name=sname)
-    except Exception:
-      pass
+          if sname != "EMPTY":
+            df_temp = pd.read_excel(xls, sheet_name=sname)
+            if not df_temp.empty:
+              sheets[sname] = df_temp
+    except Exception as e:
+      st.error(f"Gagal membaca database master: {e}")
   return sheets
 
 
 def save_master_database(sheets_dict):
   try:
     with pd.ExcelWriter(MASTER_FILE, engine="openpyxl") as writer:
+      has_data = False
       for sname, df in sheets_dict.items():
-        if not df.empty:
-          df.to_excel(writer, sheet_name=sname[:31], index=False)
+        if df is not None and not df.empty:
+          df.to_excel(writer, sheet_name=str(sname)[:31], index=False)
+          has_data = True
+
+      if not has_data:
+        pd.DataFrame({"STATUS": ["EMPTY"]}).to_excel(
+            writer, sheet_name="EMPTY", index=False
+        )
   except Exception as e:
     st.error(f"Gagal menyimpan database master: {e}")
 
@@ -249,9 +260,14 @@ def safe_reset_database():
   if os.path.exists(MASTER_FILE):
     try:
       os.remove(MASTER_FILE)
-    except PermissionError:
-      with pd.ExcelWriter(MASTER_FILE, engine="openpyxl") as writer:
-        pd.DataFrame().to_excel(writer, sheet_name="EMPTY", index=False)
+    except Exception:
+      try:
+        with pd.ExcelWriter(MASTER_FILE, engine="openpyxl") as writer:
+          pd.DataFrame({"STATUS": ["EMPTY"]}).to_excel(
+              writer, sheet_name="EMPTY", index=False
+          )
+      except Exception:
+        pass
 
 
 if "logged_in" not in st.session_state:
@@ -288,7 +304,6 @@ if not st.session_state.logged_in:
           unsafe_allow_html=True,
       )
 
-      # Field terisi kosong agar pengguna mengetik manual
       u = st.text_input("Username", value="", placeholder="Masukkan username")
       p = st.text_input(
           "Password",
@@ -308,7 +323,6 @@ if not st.session_state.logged_in:
           st.error("Kredensial salah! Silakan periksa username dan password.")
   st.stop()
 
-# Set background bersih terang khusus area Dashboard Dalam
 st.markdown(
     """
     <style>
@@ -553,6 +567,30 @@ def parse_clean_breakdown(data_sheets):
       if df_c.empty:
         continue
 
+      # EKSTRAKSI TANGGAL DARI DATA BREAKDOWN
+      date_col = None
+      for col in df_c.columns:
+        col_up = str(col).strip().upper()
+        if "TGL" in col_up or "TANGGAL" in col_up or "DATE" in col_up:
+          date_col = col
+          break
+
+      if date_col:
+        df_c["Tanggal"] = df_c[date_col].apply(
+            lambda x: f"Tgl {int(re.sub(r'\\D', '', str(x))):02d}"
+            if re.sub(r"\D", "", str(x))
+            else "Semua Tanggal"
+        )
+      else:
+        def extract_tgl_from_desc(row):
+          desc = str(row.get("Description", ""))
+          match = re.search(r"(?:TGL|TANGGAL)\s*(\d+)", desc, re.IGNORECASE)
+          if match:
+            return f"Tgl {int(match.group(1)):02d}"
+          return "Semua Tanggal"
+
+        df_c["Tanggal"] = df_c.apply(extract_tgl_from_desc, axis=1)
+
       df_c.insert(0, "Bulan", str(b_tag))
 
       for qc_unit in all_standard_qcs:
@@ -567,7 +605,7 @@ def parse_clean_breakdown(data_sheets):
 
       fixed_cols = [
           c
-          for c in ["Bulan", "Description", "Nama Subsystem"]
+          for c in ["Bulan", "Tanggal", "Description", "Nama Subsystem"]
           if c in df_c.columns
       ]
       crane_cols = sorted(all_standard_qcs)
@@ -802,8 +840,9 @@ def parse_clean_wo(data_sheets):
   return pd.DataFrame()
 
 
-# Load Database
-st.session_state.data_sheets = load_master_database()
+# Load Database Permanen
+if "data_sheets" not in st.session_state or not st.session_state.data_sheets:
+  st.session_state.data_sheets = load_master_database()
 
 # Load Extracted Data
 df_prod = parse_daily_boxes(st.session_state.data_sheets)
@@ -821,7 +860,10 @@ if not df_bd_clean.empty:
 if not df_wo.empty:
   available_months_set.update(df_wo["Bulan"].unique())
 
-global_month_options = ["Semua Bulan"] + sorted(list(available_months_set))
+ordered_available_months = [
+    m for m in MONTH_LIST if m in available_months_set
+]
+global_month_options = ["Semua Bulan"] + ordered_available_months
 
 if "shared_selected_month" not in st.session_state:
   st.session_state.shared_selected_month = global_month_options[0]
@@ -987,7 +1029,7 @@ with tab1:
     )
 
 # ---------------------------------------------------------
-# TAB 2: RINCIAN BREAKDOWN (QC01 - QC25 URUT PAS)
+# TAB 2: RINCIAN BREAKDOWN (QC01 - QC25 + TANGGAL LENGKAP 1-31)
 # ---------------------------------------------------------
 with tab2:
   st.subheader("🚨 Rincian Kejadian Breakdown Container Crane (QC01 - QC25)")
@@ -1009,12 +1051,24 @@ with tab2:
     )
 
     with col_bd_d:
+      # Opsi tanggal dibuat lengkap 1-31 secara otomatis
+      all_days_options = [f"Tgl {i:02d}" for i in range(1, 32)]
+
+      # Ambil tanggal spesifik jika ada di data, atau sediakan daftar 1-31
       if "Tanggal" in df_show_bd.columns and not df_show_bd.empty:
-        avail_bd_dates = ["Semua Tanggal (Full Month)"] + sorted(
-            [t for t in df_show_bd["Tanggal"].unique() if t != "Lainnya"]
-        )
+        existing_dates = [
+            t
+            for t in df_show_bd["Tanggal"].unique()
+            if t not in ["Lainnya", "Semua Tanggal", "-"]
+        ]
+        if existing_dates:
+          avail_bd_dates = ["Semua Tanggal (Full Month)"] + sorted(
+              existing_dates
+          )
+        else:
+          avail_bd_dates = ["Semua Tanggal (Full Month)"] + all_days_options
       else:
-        avail_bd_dates = ["Semua Tanggal (Full Month)"]
+        avail_bd_dates = ["Semua Tanggal (Full Month)"] + all_days_options
 
       sel_bd_date = st.selectbox(
           "📆 **Pilih Tanggal Breakdown:**",
@@ -1022,11 +1076,15 @@ with tab2:
           key="bd_selected_date",
       )
 
+    # Filter data jika pengguna memilih tanggal spesifik
     if (
         sel_bd_date != "Semua Tanggal (Full Month)"
         and "Tanggal" in df_show_bd.columns
     ):
-      df_show_bd = df_show_bd[df_show_bd["Tanggal"] == sel_bd_date]
+      filtered_by_date = df_show_bd[df_show_bd["Tanggal"] == sel_bd_date]
+      # Jika data pada tanggal spesifik kosong (karena sheet rekap), tampilkan data rekap bulanan
+      if not filtered_by_date.empty:
+        df_show_bd = filtered_by_date
 
     col_b1, col_b2 = st.columns([2, 1])
     with col_b1:
@@ -1243,7 +1301,7 @@ with tab4:
     st.info("Data Work Order belum tersedia.")
 
 # ---------------------------------------------------------
-# TAB 5: ASISTEN AI (SUPER KILAT & ULTRA FAST)
+# TAB 5: ASISTEN AI (SMART QUERY MATCHING - TIDAK POTONG DATA)
 # ---------------------------------------------------------
 with tab5:
   st.subheader("🤖 Asisten AI Pemeliharaan Crane")
@@ -1264,7 +1322,6 @@ with tab5:
     if user_key_input:
       active_key = user_key_input.strip()
 
-  # Tampilkan riwayat percakapan
   for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
       st.write(msg["content"])
@@ -1284,87 +1341,111 @@ with tab5:
       with st.chat_message("assistant"):
         st.error(err_msg)
     else:
-      # Deteksi Sapaan Umum (Biar Nggak Perlu Load Data Excel yang Berat)
-      greeting_keywords = [
-          "halo",
-          "hai",
-          "hi",
-          "permisi",
-          "pagi",
-          "siang",
-          "sore",
-          "malam",
-          "tes",
-          "test",
-      ]
-      is_simple_greeting = any(
-          k in user_query.lower().strip() for k in greeting_keywords
-      ) and len(user_query.split()) <= 3
+      q_clean = user_query.lower()
 
-      if is_simple_greeting:
-        context_data = "User hanya menyapa, berikan salam balik yang ramah dan tanyakan apa yang bisa dibantu terkait crane."
-      else:
-        # Ekstrak kata kunci untuk pencarian data
-        keywords = [
-            w.lower()
-            for w in user_query.split()
-            if len(w) > 1 and w.lower() not in ["ada", "apa", "di", "ke", "bulan"]
-        ]
+      # Normalisasi Typo Bulan
+      typo_map = {
+          "junli": "juli",
+          "july": "juli",
+          "agust": "agustus",
+          "august": "agustus",
+          "jan": "januari",
+          "feb": "februari",
+          "mar": "maret",
+          "apr": "april",
+          "jun": "juni",
+          "sep": "september",
+          "okt": "oktober",
+          "nov": "november",
+          "des": "desember",
+      }
+      for k, v in typo_map.items():
+        q_clean = re.sub(rf"\b{k}\b", v, q_clean)
 
-        def get_light_data(df, max_rows=15):
-          if df.empty:
-            return ""
-          if not keywords:
-            return df.head(max_rows).to_string(index=False)
+      # Deteksi Kata Kunci Utama
+      found_months = [m for m in MONTH_LIST if m.lower() in q_clean]
+      found_numbers = re.findall(r"\d+", q_clean)  # Deteksi angka tanggal / unit
 
-          # Filter baris yang cocok dengan kata kunci
-          mask = df.astype(str).apply(
-              lambda r: any(k in " ".join(r.values).lower() for k in keywords),
-              axis=1,
-          )
-          filtered = df[mask]
-          if not filtered.empty:
-            return filtered.head(max_rows).to_string(index=False)
-          return df.head(10).to_string(index=False)
+      # Fungsi Filter Cerdas: Memprioritaskan baris data yang cocok dengan pertanyaan
+      def get_relevant_context(df, title, max_r=150):
+        if df.empty:
+          return f"=== {title} ===\n(Tidak Ada Data Tersimpan)\n"
 
-        context_data = f"""
-                === DATA RELEVAN DASHBOARD ===
-                PRODUKSI:
-                {get_light_data(df_prod)}
+        df_str = df.astype(str)
+        mask = pd.Series(False, index=df.index)
 
-                BREAKDOWN:
-                {get_light_data(df_bd_clean)}
+        # 1. Filter Berdasarkan Bulan
+        if found_months:
+          for m in found_months:
+            if "Bulan" in df.columns:
+              mask |= df["Bulan"].str.lower() == m.lower()
+            mask |= df_str.apply(
+                lambda r: m.lower() in " ".join(r.values).lower(), axis=1
+            )
 
-                WORK ORDER:
-                {get_light_data(df_wo)}
-                """
+        # 2. Filter Berdasarkan Angka (Misal Tanggal 12 atau CC15)
+        if found_numbers:
+          num_mask = pd.Series(False, index=df.index)
+          for num in found_numbers:
+            n_val = str(int(num))
+            pats = [
+                f"-{n_val.zfill(2)}",
+                f"-{n_val}",
+                f"Tgl {n_val.zfill(2)}",
+                f"CC{n_val.zfill(2)}",
+                f"QC{n_val.zfill(2)}",
+                f"CC{n_val}",
+                f"QC{n_val}",
+            ]
+            for pat in pats:
+              num_mask |= df_str.apply(
+                  lambda r: pat.lower() in " ".join(r.values).lower(), axis=1
+              )
 
-      # Prompt Ringkas
+          if mask.any() and (mask & num_mask).any():
+            mask = mask & num_mask
+          elif not found_months and num_mask.any():
+            mask = num_mask
+
+        filtered_df = df[mask] if mask.any() else df
+
+        return f"=== {title} (Menampilkan {len(filtered_df.head(max_r))} Baris Relevan dari Total {len(df)}) ===\n" + filtered_df.head(
+            max_r
+        ).to_string(index=False)
+
+      context_data = f"""
+            {get_relevant_context(df_prod, "DATABASE PRODUKSI BOXES HARIAN")}
+            
+            {get_relevant_context(df_bd_clean, "DATABASE RINCIAN BREAKDOWN SUBSYSTEM (QC01 - QC25)")}
+            
+            {get_relevant_context(df_wo, "DATABASE WORK ORDER (WO) & PERBAIKAN")}
+            """
+
       system_prompt = f"""
-            Kamu adalah Asisten AI Senior Maintenance Engineer Container Crane (CC) Pelindo.
-            Jawab ramah, lugas, presisi, dan berikan rekomendasi teknis jika ada kendala.
+            Kamu adalah Asisten AI Senior Maintenance Engineer Container Crane (CC/QC) Pelindo yang sangat cerdas, teliti, dan presisi.
 
+            PRINSIP & INSTRUKSI KERJA UTAMA:
+            1. CEK SELURUH REKAMAN TEKS: Periksa baris demi baris pada bagian [DATABASE WORK ORDER] dan [DATABASE BREAKDOWN] di bawah.
+            2. BACAKAN DATA DENGAN FAKTUAT DAN AKURAT: 
+               - Jika ditemukan catatan Work Order (WO) atau breakdown pada bulan/tanggal yang ditanyakan (contoh: 12 Juni), SEBUTKAN NOMOR WO, UNIT CC/QC, DAN DESKRIPSI KERUSAKANNYA SECARA DETAIL.
+               - Dilarang keras menyatakan "TIDAK ADA DATA" apabila terdapat baris WO di tabel konteks!
+            3. BERIKAN REKOMENDASI TEKNIS SOLUTIF: Berikan panduan analisis teknis perbaikan bagi teknisi lapangan sesuai dengan jenis kendala (misal: Trouble Spreader Leaks / Spreader Fault).
+
+            === REKAMAN DATABASE RELEVAN HASIL PENJARINGAN ===
             {context_data}
             """
 
-      full_prompt = f"{system_prompt}\n\nPertanyaan: {user_query}"
+      full_prompt = f"{system_prompt}\n\nPertanyaan Pengguna: {user_query}"
 
       with st.chat_message("assistant"):
-        with st.spinner("Menganalisis..."):
+        with st.spinner("Menganalisis data relevan & menyusun laporan..."):
           try:
             genai.configure(api_key=active_key)
-            # Menggunakan gemini-2.5-flash untuk kecepatan maksimal
             model = genai.GenerativeModel("gemini-3.6-flash")
             response = model.generate_content(full_prompt)
             ai_reply = response.text
-          except Exception:
-            # Fallback ke gemini-1.5-flash jika versi 2.5 belum tersedia di region kamu
-            try:
-              model = genai.GenerativeModel("gemini-3.6-flash")
-              response = model.generate_content(full_prompt)
-              ai_reply = response.text
-            except Exception as ex:
-              ai_reply = f"⚠️ Gagal memproses respon AI: {ex}"
+          except Exception as ex:
+            ai_reply = f"⚠️ Gagal memproses respon AI: {ex}"
 
           st.write(ai_reply)
           st.session_state.messages.append(
